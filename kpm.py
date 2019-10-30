@@ -43,8 +43,8 @@ def step_coef(a, b, j):
     return 2 / pi * (sin(j * arccos(a)) - np.sin(j * np.arccos(b))) / j
 
 
-def step(a, b, p):
-    c = [step_coef(a, b, j) * jackson_coef(p, j) for j in range(0, p + 1)]
+def step(lb, ub, degree):
+    c = [step_coef(lb, ub, j) * jackson_coef(degree, j) for j in range(0, degree + 1)]
     h = np.polynomial.Chebyshev(c)
 
     return h
@@ -102,6 +102,8 @@ def kpm(graph, l_lb, l_ub, cheb_degree, num_samples):
     A = shifted_laplacian(graph)
     n = A.shape[0]
 
+    print("Exact ", np.real(sum(step(l_lb, l_ub, cheb_degree)(l) for l in np.linalg.eigvals(A))))
+
     def coef(j):
         return step_coef(l_lb, l_ub, j) * jackson_coef(cheb_degree, j)
 
@@ -128,8 +130,9 @@ if __name__ == "__main__":
     # exit()
     for i in range(1, 10):
         graph = read_metis(f'1K_full_spectrum/graphs/{i}.metis')
-        kpm_test(graph, step(0.5, 1, 80), 100)
-        kpm(graph, 0.5, 1, 70, 100)
+        # kpm_test(graph, step(0.5, 1, 80), 100)
+        # print(step(-0.1,0.1,100)(0))
+        kpm(graph, -0.1, 0.1, 100, 100)
         print()
         continue
 
