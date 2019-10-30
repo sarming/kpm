@@ -52,8 +52,9 @@ def step(a, b, p):
 
 
 def random_vector(n):
-    return np.random.choice([-1, 1], n)
-    # return 2 * np.random.rand(n) - 1
+    # return np.random.choice([-1, 1], n)
+    v = 2 * np.random.rand(n) - 1
+    return v / np.linalg.norm(v)
 
 
 def mat_poly(M, p):
@@ -94,7 +95,7 @@ def kpm_test(graph, h, num_samples):
     # print(hA.dot(random_vector(N)))
     # print(hA)
     s = sum(v @ hA @ v for v in (random_vector(n) for i in range(num_samples)))
-    print("Estimator ", s / num_samples)
+    print("Estimator ", n * s / num_samples)
 
 
 def kpm(graph, l_lb, l_ub, cheb_degree, num_samples):
@@ -119,7 +120,7 @@ def kpm(graph, l_lb, l_ub, cheb_degree, num_samples):
 
         s += sample
 
-    print(s / num_samples)
+    print(n * s / num_samples)
 
 
 if __name__ == "__main__":
