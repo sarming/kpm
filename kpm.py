@@ -18,13 +18,12 @@ def read_metis(file):
 
 def read_eigvals(file):
     with open(file) as f:
-        return [float(x) for x in f.readlines()]
+        return [float(x) - 1.0 for x in f.readlines()]
 
 
 def eigvals(graph):
-    laplacian = nx.normalized_laplacian_matrix(graph)
-    vals = np.linalg.eigvals(laplacian.A - np.identity(graph.number_of_nodes()))
-    vals = np.real(vals)
+    A = shifted_laplacian(graph)
+    vals = np.linalg.eigvalsh(A)
     return sorted(vals, reverse=True)
 
 
@@ -98,6 +97,12 @@ def kpm_test(graph, h, num_samples):
     print("Estimator ", n * s / num_samples)
 
 
+def chebyshev_exact(A, coef):
+    h = np.polynomial.Chebyshev(coef)
+    vals = np.linalg.eigvalsh(A)
+    return sum(h(l) for l in vals)
+
+
 def chebyshev_estimator(A, coef, num_samples):
     assert len(coef) > 1
 
@@ -122,21 +127,22 @@ def chebyshev_estimator(A, coef, num_samples):
 def kpm(graph, l_lb, l_ub, cheb_degree, num_samples):
     A = shifted_laplacian(graph)
 
-    # print("Exact ", np.real(sum(step(l_lb, l_ub, cheb_degree)(l) for l in np.linalg.eigvals(A))))
+    print("Exact    ", sum(l_lb <= l <= l_ub for l in np.linalg.eigvalsh(A)))
 
     coef = [step_coef(l_lb, l_ub, j) * jackson_coef(cheb_degree, j) for j in range(cheb_degree + 1)]
 
-    print(chebyshev_estimator(A, coef, num_samples))
+    print("Chebyshev", chebyshev_exact(A, coef))
+    print("Estimated", chebyshev_estimator(A, coef, num_samples))
 
 
 if __name__ == "__main__":
     # step(-0.1,0.1,100)
     # exit()
-    for i in range(1, 10):
+    for i in range(10, 20):
         graph = read_metis(f'1K_full_spectrum/graphs/{i}.metis')
-        # kpm_test(graph, step(0.5, 1, 80), 100)
+        # kpm_test(graph, step(-0.1, 0.1, 80), 100)
         # print(step(-0.1,0.1,100)(0))
-        kpm(graph, -0.1, 0.1, 100, 100)
+        kpm(graph, -0.1, 0.1, 80, 100)
         print()
         continue
 
