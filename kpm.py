@@ -1,5 +1,6 @@
 import networkx as nx
 import numpy as np
+from numpy.polynomial import Chebyshev, Polynomial
 import matplotlib.pyplot as plt
 
 
@@ -31,8 +32,9 @@ def jackson_coef(p, j):
     # return 1
     from numpy import cos, sin, pi
     alpha = pi / (p + 2)
-    x = (1 - j / (p + 2)) * sin(alpha) * cos(j * alpha) + 1 / (p + 2) * cos(alpha) * sin(j * alpha)
-    return x / sin(alpha)
+    a = (1 - j / (p + 2)) * sin(alpha) * cos(j * alpha)
+    b = 1 / (p + 2) * cos(alpha) * sin(j * alpha)
+    return (a + b) / sin(alpha)
 
 
 def step_coef(a, b, j):
@@ -42,12 +44,12 @@ def step_coef(a, b, j):
     return 2 / pi * (sin(j * arccos(a)) - np.sin(j * np.arccos(b))) / j
 
 
-def step(lb, ub, degree):
-    c = [step_coef(lb, ub, j) * jackson_coef(degree, j) for j in range(0, degree + 1)]
-    h = np.polynomial.Chebyshev(c)
+def step_jackson_coef(lb, ub, degree):
+    return [step_coef(lb, ub, j) * jackson_coef(degree, j) for j in range(degree + 1)]
 
-    return h
-    return h.convert(kind=np.polynomial.Polynomial).coef
+
+def step(lb, ub, degree):
+    return Chebyshev(step_jackson_coef(lb, ub, degree))
 
 
 def random_vector(n):
@@ -73,15 +75,17 @@ def shifted_laplacian(graph):
     return laplacian.A - 1 * np.identity(n)
 
 
-def kpm_test(graph, h, num_samples):
+def kpm_test(graph, lb, ub, cheb_degree, num_samples):
     A = shifted_laplacian(graph)
     n = A.shape[0]
 
-    # print(sum(l >= 0.5 for l in np.linalg.eigvals(A)))
-    print("Chebychev ", np.real(sum(h(l) for l in np.linalg.eigvals(A))))
+    h = Chebyshev(step_jackson_coef(lb, ub, cheb_degree))
 
-    h_poly = h.convert(kind=np.polynomial.Polynomial)
-    print("Polynomial", np.real(sum(h_poly(l) for l in np.linalg.eigvals(A))))
+    # print(sum(l >= 0.5 for l in np.linalg.eigvals(A)))
+    print("Chebychev ", sum(h(l) for l in np.linalg.eigvalsh(A)))
+
+    h_poly = h.convert(kind=Polynomial)
+    print("Polynomial", sum(h_poly(l) for l in np.linalg.eigvalsh(A)))
 
     x = np.arange(-1, 1, 0.0001)
     # plt.plot(x, h_poly(x))
@@ -98,7 +102,7 @@ def kpm_test(graph, h, num_samples):
 
 
 def chebyshev_exact(A, coef):
-    h = np.polynomial.Chebyshev(coef)
+    h = Chebyshev(coef)
     vals = np.linalg.eigvalsh(A)
     return sum(h(l) for l in vals)
 
@@ -124,12 +128,12 @@ def chebyshev_estimator(A, coef, num_samples):
     return n / num_samples * s
 
 
-def kpm(graph, l_lb, l_ub, cheb_degree, num_samples):
+def kpm(graph, lb, ub, cheb_degree, num_samples):
     A = shifted_laplacian(graph)
 
-    print("Exact    ", sum(l_lb <= l <= l_ub for l in np.linalg.eigvalsh(A)))
+    print("Exact    ", sum(lb <= l <= ub for l in np.linalg.eigvalsh(A)))
 
-    coef = [step_coef(l_lb, l_ub, j) * jackson_coef(cheb_degree, j) for j in range(cheb_degree + 1)]
+    coef = step_jackson_coef(lb, ub, cheb_degree)
 
     print("Chebyshev", chebyshev_exact(A, coef))
     print("Estimated", chebyshev_estimator(A, coef, num_samples))
@@ -140,7 +144,7 @@ if __name__ == "__main__":
     # exit()
     for i in range(10, 20):
         graph = read_metis(f'1K_full_spectrum/graphs/{i}.metis')
-        # kpm_test(graph, step(-0.1, 0.1, 80), 100)
+        # kpm_test(graph, -0.1, 0.1, 80, 100)
         # print(step(-0.1,0.1,100)(0))
         kpm(graph, -0.1, 0.1, 80, 100)
         print()
