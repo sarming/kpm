@@ -98,31 +98,35 @@ def kpm_test(graph, h, num_samples):
     print("Estimator ", n * s / num_samples)
 
 
-def kpm(graph, l_lb, l_ub, cheb_degree, num_samples):
-    A = shifted_laplacian(graph)
+def chebyshev_estimator(A, coef, num_samples):
+    assert len(coef) > 1
+
     n = A.shape[0]
-
-    print("Exact ", np.real(sum(step(l_lb, l_ub, cheb_degree)(l) for l in np.linalg.eigvals(A))))
-
-    def coef(j):
-        return step_coef(l_lb, l_ub, j) * jackson_coef(cheb_degree, j)
 
     s = 0.0
     for k in range(num_samples):
         v = random_vector(n)
-        assert cheb_degree > 1
         w_2 = v
         w_1 = A @ v
-        sample = coef(0) * v @ w_2 + coef(1) * v @ w_1
-        for j in range(2, cheb_degree + 1):
+        sample = coef[0] * v @ w_2 + coef[1] * v @ w_1
+        for c in coef[2:]:
             w = 2 * A @ w_1 - w_2
-            sample += coef(j) * v @ w
+            sample += c * v @ w
             w_2 = w_1
             w_1 = w
 
         s += sample
+    return n / num_samples * s
 
-    print(n * s / num_samples)
+
+def kpm(graph, l_lb, l_ub, cheb_degree, num_samples):
+    A = shifted_laplacian(graph)
+
+    # print("Exact ", np.real(sum(step(l_lb, l_ub, cheb_degree)(l) for l in np.linalg.eigvals(A))))
+
+    coef = [step_coef(l_lb, l_ub, j) * jackson_coef(cheb_degree, j) for j in range(cheb_degree + 1)]
+
+    print(chebyshev_estimator(A, coef, num_samples))
 
 
 if __name__ == "__main__":
