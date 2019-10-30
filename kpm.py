@@ -101,22 +101,26 @@ def kpm(graph, l_lb, l_ub, cheb_degree, num_samples):
     A = shifted_laplacian(graph)
     n = A.shape[0]
 
+    def coef(j):
+        return step_coef(l_lb, l_ub, j) * jackson_coef(cheb_degree, j)
+
     s = 0.0
     for k in range(num_samples):
-        sample = 0.0
         v = random_vector(n)
         assert cheb_degree > 1
-        w = np.empty((cheb_degree + 1, n))
-        w[0] = v
-        w[1] = A @ v
-        for j in range(cheb_degree + 1):
-            coef = step_coef(l_lb, l_ub, j) * jackson_coef(cheb_degree, j)
-            sample += coef * v @ w[j]
-            if j + 2 <= cheb_degree:
-                w[j + 2] = 2 * A @ w[j + 1] - w[j]
+        w_2 = v
+        w_1 = A @ v
+        sample = coef(0) * v @ w_2 + coef(1) * v @ w_1
+        for j in range(2, cheb_degree + 1):
+            w = 2 * A @ w_1 - w_2
+            sample += coef(j) * v @ w
+            w_2 = w_1
+            w_1 = w
+
         s += sample
 
-    print(s/num_samples)
+    print(s / num_samples)
+
 
 if __name__ == "__main__":
     # step(-0.1,0.1,100)
@@ -124,7 +128,7 @@ if __name__ == "__main__":
     for i in range(1, 10):
         graph = read_metis(f'1K_full_spectrum/graphs/{i}.metis')
         kpm_test(graph, step(0.5, 1, 80), 100)
-        kpm(graph,0.5,1,70,100)
+        kpm(graph, 0.5, 1, 70, 100)
         print()
         continue
 
