@@ -142,8 +142,8 @@ def kpm(graph, lb, ub, cheb_degree, num_samples):
 if __name__ == "__main__":
     # step(-0.1,0.1,100)
     # exit()
-    for i in range(10, 20):
-        graph = read_metis(f'1K_full_spectrum/graphs/{i}.metis')
+    for i in range(4, 5):
+        graph = read_metis(f'10K/graphs/{i}.metis')
         # kpm_test(graph, -0.1, 0.1, 80, 100)
         # print(step(-0.1,0.1,100)(0))
         kpm(graph, -0.1, 0.1, 80, 100)
@@ -151,7 +151,7 @@ if __name__ == "__main__":
         continue
 
         ev = eigvals(graph)
-        # ev_old = read_eigvals(f'1K_full_spectrum/eigenvalues/{i}.ev')
+        # ev_old = read_eigvals(f'1K/evs/{i}.ev')
         # diff = max(abs(new - old) for (new, old) in zip(ev, ev_old))
         # print(i, diff)
 
