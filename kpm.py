@@ -79,6 +79,9 @@ def kpm_test(graph, lb, ub, cheb_degree, num_samples):
     A = shifted_laplacian(graph)
     n = A.shape[0]
 
+    # lb -= 1
+    # ub -= 1
+
     h = Chebyshev(step_jackson_coef(lb, ub, cheb_degree))
 
     # print(sum(l >= 0.5 for l in np.linalg.eigvals(A)))
@@ -130,6 +133,8 @@ def chebyshev_estimator(A, coef, num_samples):
 
 def kpm(graph, lb, ub, cheb_degree, num_samples):
     A = shifted_laplacian(graph)
+    # lb -= 1
+    # ub -= 1
 
     print("Exact    ", sum(lb <= l <= ub for l in np.linalg.eigvalsh(A)))
 
@@ -139,14 +144,35 @@ def kpm(graph, lb, ub, cheb_degree, num_samples):
     print("Estimated", chebyshev_estimator(A, coef, num_samples))
 
 
+def plot_step_cheb(bounds, degrees):
+    bounds = [(lb - 1, ub - 1) for lb, ub in bounds]
+
+    x = np.arange(-1, 1, 0.0001)
+    for deg in degrees:
+        # plt.plot(x, np.transpose([step(lb, ub, deg)(x) for (lb,ub) in bounds]))
+        for (lb, ub) in bounds:
+            plt.plot(x, step(lb, ub, deg)(x))
+
+
 if __name__ == "__main__":
-    # step(-0.1,0.1,100)
+    plot_step_cheb([(0.21, 0.23), (0.23, 0.25)], [100, 500, 1000, 5000])
+    plt.xlim(-0.8, -0.76)
+    plt.show()
+
+    # print(step_coef(0.21 - 1, 0.23 - 1, 10000))
+    # y = step_jackson_coef(0.21 - 1, 0.23 - 1, 10000)
+    # plt.plot([sum(abs(x) for x in y[i:]) for i in range(10000)])
+    # y = [step_coef(0.21 - 1, 0.23 - 1, i) for i in range(10000)]
+    # plt.plot([sum(abs(x) for x in y[i:]) for i in range(10000)])
+    # plt.ylim(0, 0.2)
+    # plt.show()
+
     # exit()
     for i in range(4, 5):
-        graph = read_metis(f'10K/graphs/{i}.metis')
+        graph = read_metis(f'1K/graphs/{i}.metis')
         # kpm_test(graph, -0.1, 0.1, 80, 100)
-        # print(step(-0.1,0.1,100)(0))
-        kpm(graph, -0.1, 0.1, 80, 100)
+
+        kpm(graph, 0.21, 0.23, 500, 50)
         print()
         continue
 
