@@ -1,3 +1,4 @@
+import re
 import networkx as nx
 import numpy as np
 from numpy.polynomial import Chebyshev, Polynomial
@@ -19,7 +20,30 @@ def read_metis(file):
 
 def read_eigvals(file):
     with open(file) as f:
-        return [float(x) - 1.0 for x in f.readlines()]
+        eigvals = np.array([float(x) for x in f.readlines()])
+        return eigvals - 1.0
+
+
+def read_histogram(file, density=False):
+    hist = []
+    bin_edges = []
+    with open(file) as f:
+        for i, line in enumerate(f.readlines()):
+            (lb, ub, n) = map(float, re.split(r'[()\[\]\s\,]+', line)[1:4])
+            hist.append(n)
+            if i == 0:
+                bin_edges.append(lb)
+            assert bin_edges[-1] == lb
+            bin_edges.append(ub)
+
+    bin_edges = np.array(bin_edges)
+    bin_edges -= 1
+
+    hist = np.array(hist)
+    if density:
+        hist /= sum(hist)
+
+    return hist, bin_edges
 
 
 def eigvals(graph):
@@ -75,8 +99,7 @@ def shifted_laplacian(graph):
     return laplacian.A - 1 * np.identity(n)
 
 
-def kpm_test(graph, lb, ub, cheb_degree, num_samples):
-    A = shifted_laplacian(graph)
+def kpm_test(A, lb, ub, cheb_degree, num_samples):
     n = A.shape[0]
 
     # lb -= 1
@@ -132,7 +155,6 @@ def chebyshev_estimator(A, coef, num_samples):
 
 
 def kpm(graph, lb, ub, cheb_degree, num_samples):
-    A = shifted_laplacian(graph)
     # lb -= 1
     # ub -= 1
 
@@ -142,6 +164,16 @@ def kpm(graph, lb, ub, cheb_degree, num_samples):
 
     print("Chebyshev", chebyshev_exact(A, coef))
     print("Estimated", chebyshev_estimator(A, coef, num_samples))
+
+
+def estimate_histogram(A, bin_edges, cheb_degree, num_samples):
+    hist = []
+    for lb, ub in zip(bin_edges, bin_edges[1:]):
+        coef = step_jackson_coef(lb, ub, cheb_degree)
+        estimate = chebyshev_estimator(A, coef, num_samples)
+        hist.append(estimate)
+        print('.')
+    return np.array(hist)
 
 
 def plot_step_cheb(bounds, degrees):
@@ -154,10 +186,24 @@ def plot_step_cheb(bounds, degrees):
             plt.plot(x, step(lb, ub, deg)(x))
 
 
-if __name__ == "__main__":
-    plot_step_cheb([(0.21, 0.23), (0.23, 0.25)], [100, 500, 1000, 5000])
-    plt.xlim(-0.8, -0.76)
+def compare_hist(u, v, bin_edges):
+    from scipy.stats import wasserstein_distance
+    bin_middle = [(lb + ub) / 2 for lb, ub in zip(bin_edges, bin_edges[1:])]
+    plt.plot(bin_middle, u)
+    plt.plot(bin_middle, v)
     plt.show()
+    return wasserstein_distance(bin_middle, bin_middle, u, v)
+
+
+if __name__ == "__main__":
+    hist_old, bin_edges = read_histogram(f'100K/evs/1.ev')
+    hist_2, bin_edges = read_histogram(f'50K/evs/14.ev')
+    print(compare_hist(hist_old, hist_2, bin_edges))
+    # hist_old, bin_edges = np.histogram(ev_old, 10, range=(-1, 1))
+    # print(bin_edges)
+    # plot_step_cheb([(0.21, 0.23), (0.23, 0.25)], [100, 500, 1000, 5000])
+    # plt.xlim(-0.8, -0.76)
+    # plt.show()
 
     # print(step_coef(0.21 - 1, 0.23 - 1, 10000))
     # y = step_jackson_coef(0.21 - 1, 0.23 - 1, 10000)
@@ -170,19 +216,29 @@ if __name__ == "__main__":
     # exit()
     for i in range(4, 5):
         graph = read_metis(f'1K/graphs/{i}.metis')
-        # kpm_test(graph, -0.1, 0.1, 80, 100)
+        A = shifted_laplacian(graph)
+        # kpm_test(A, -0.1, 0.1, 80, 100)
 
-        kpm(graph, 0.21, 0.23, 500, 50)
-        print()
-        continue
+        # kpm(A, 0.21, 0.23, 500, 50)
+        # print()
+        # continue
 
         ev = eigvals(graph)
-        # ev_old = read_eigvals(f'1K/evs/{i}.ev')
+        hist, bin_edges = np.histogram(ev, 11, range=(-1, 1))
+        ev_old = read_eigvals(f'1K/evs/{i}.ev')
+        hist_old = np.histogram(ev_old, bin_edges)[0]
+
+        print(compare_hist(hist, hist_old, bin_edges))
+
+        hist_est = estimate_histogram(A, bin_edges, 80, 10)
+        print(hist_est)
+        print(compare_hist(hist, hist_est, bin_edges))
+
         # diff = max(abs(new - old) for (new, old) in zip(ev, ev_old))
         # print(i, diff)
 
         plt.hist(ev, bins=100, alpha=0.5)
-        # plt.hist(ev_old, bins=100, color='r', alpha=0.5)
+        plt.hist(ev_old, bins=100, color='r', alpha=0.5)
         plt.xlim(-1, 1)
         plt.ylim(0, 50)
         plt.show()
