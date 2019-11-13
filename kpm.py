@@ -1,9 +1,22 @@
-import re
+import re, time
 import networkx as nx
 import numpy as np
 from numpy.polynomial import Chebyshev, Polynomial
 import matplotlib.pyplot as plt
+from profilehooks import profile
 
+# from functools import wraps
+#
+# def timing(f):
+#     @wraps(f)
+#     def wrap(*args, **kw):
+#         ts = time.time()
+#         result = f(*args, **kw)
+#         te = time.time()
+#         print('func:%r args:[%r, %r] took: %2.4f sec' % \
+#           (f.__name__, args, kw, te-ts))
+#         return result
+#     return wrap
 
 def read_metis(file):
     graph = nx.Graph()
@@ -133,6 +146,7 @@ def chebyshev_exact(A, coef):
     return sum(h(l) for l in vals)
 
 
+@profile
 def chebyshev_estimator(A, coef, num_samples):
     assert len(coef) > 1
 
@@ -186,19 +200,23 @@ def plot_step_cheb(bounds, degrees):
             plt.plot(x, step(lb, ub, deg)(x))
 
 
-def compare_hist(u, v, bin_edges):
+def compare_hist(u, v, edges_u, edges_v=None):
     from scipy.stats import wasserstein_distance
-    bin_middle = [(lb + ub) / 2 for lb, ub in zip(bin_edges, bin_edges[1:])]
-    plt.plot(bin_middle, u)
-    plt.plot(bin_middle, v)
+    if not len(edges_v):
+        edges_v = edges_u
+    middle_u = [(lb + ub) / 2 for lb, ub in zip(edges_u, edges_u[1:])]
+    middle_v = [(lb + ub) / 2 for lb, ub in zip(edges_v, edges_v[1:])]
+    plt.plot(middle_u, u)
+    plt.plot(middle_v, v)
     plt.show()
-    return wasserstein_distance(bin_middle, bin_middle, u, v)
+    return wasserstein_distance(middle_u, middle_v, u, v)
 
 
 if __name__ == "__main__":
-    hist_old, bin_edges = read_histogram(f'100K/evs/1.ev')
-    hist_2, bin_edges = read_histogram(f'50K/evs/14.ev')
-    print(compare_hist(hist_old, hist_2, bin_edges))
+    # hist_old, bin_edges = read_histogram(f'100K/evs/1.ev')
+    # hist_2, bin_edges = read_histogram(f'50K/evs/14.ev')
+    # print(compare_hist(hist_old, hist_2, bin_edges))
+
     # hist_old, bin_edges = np.histogram(ev_old, 10, range=(-1, 1))
     # print(bin_edges)
     # plot_step_cheb([(0.21, 0.23), (0.23, 0.25)], [100, 500, 1000, 5000])
@@ -223,22 +241,23 @@ if __name__ == "__main__":
         # print()
         # continue
 
-        ev = eigvals(graph)
-        hist, bin_edges = np.histogram(ev, 11, range=(-1, 1))
-        ev_old = read_eigvals(f'1K/evs/{i}.ev')
-        hist_old = np.histogram(ev_old, bin_edges)[0]
+        # ev = eigvals(graph)
+        # hist, bin_edges = np.histogram(ev, 11, range=(-1, 1))
+        # ev_old = read_eigvals(f'1K/evs/{i}.ev')
+        # hist_old = np.histogram(ev_old, bin_edges)[0]
 
-        print(compare_hist(hist, hist_old, bin_edges))
-
+        # print(compare_hist(hist, hist_old, bin_edges))
+        bin_edges = np.histogram_bin_edges([], 11, range=(-1, 1))
         hist_est = estimate_histogram(A, bin_edges, 80, 10)
         print(hist_est)
-        print(compare_hist(hist, hist_est, bin_edges))
+        # hist_old, edges_old = read_histogram(f'10K/evs/{i}.ev')
+        # print(compare_hist(hist_old, hist_est, edges_old, bin_edges))
 
         # diff = max(abs(new - old) for (new, old) in zip(ev, ev_old))
         # print(i, diff)
 
-        plt.hist(ev, bins=100, alpha=0.5)
-        plt.hist(ev_old, bins=100, color='r', alpha=0.5)
-        plt.xlim(-1, 1)
-        plt.ylim(0, 50)
-        plt.show()
+        # plt.hist(ev, bins=100, alpha=0.5)
+        # plt.hist(ev_old, bins=100, color='r', alpha=0.5)
+        # plt.xlim(-1, 1)
+        # plt.ylim(0, 50)
+        # plt.show()
