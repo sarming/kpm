@@ -1,9 +1,11 @@
 import re, time
 import networkx as nx
 import numpy as np
+import scipy as sp
 from numpy.polynomial import Chebyshev, Polynomial
 import matplotlib.pyplot as plt
 from profilehooks import profile
+
 
 # from functools import wraps
 #
@@ -108,8 +110,8 @@ def mat_poly(M, p):
 
 def shifted_laplacian(graph):
     n = graph.number_of_nodes()
-    laplacian = nx.normalized_laplacian_matrix(graph)
-    return laplacian.A - 1 * np.identity(n)
+    laplacian = sp.sparse.csgraph.laplacian(nx.to_scipy_sparse_matrix(graph), normed=True)
+    return sp.sparse.csr_matrix(laplacian - 1 * sp.sparse.eye(n))
 
 
 def kpm_test(A, lb, ub, cheb_degree, num_samples):
@@ -232,9 +234,10 @@ if __name__ == "__main__":
     # plt.show()
 
     # exit()
-    for i in range(4, 5):
-        graph = read_metis(f'1K/graphs/{i}.metis')
+    for i in range(1, 2):
+        graph = read_metis(f'100K/graphs/{i}.metis')
         A = shifted_laplacian(graph)
+        print("read")
         # kpm_test(A, -0.1, 0.1, 80, 100)
 
         # kpm(A, 0.21, 0.23, 500, 50)
@@ -248,10 +251,10 @@ if __name__ == "__main__":
 
         # print(compare_hist(hist, hist_old, bin_edges))
         bin_edges = np.histogram_bin_edges([], 11, range=(-1, 1))
-        hist_est = estimate_histogram(A, bin_edges, 80, 10)
+        hist_est = estimate_histogram(A, bin_edges, 100, 10)
         print(hist_est)
-        # hist_old, edges_old = read_histogram(f'10K/evs/{i}.ev')
-        # print(compare_hist(hist_old, hist_est, edges_old, bin_edges))
+        hist_old, edges_old = read_histogram(f'100K/evs/{i}.ev')
+        print(compare_hist(hist_old, hist_est, edges_old, bin_edges))
 
         # diff = max(abs(new - old) for (new, old) in zip(ev, ev_old))
         # print(i, diff)
