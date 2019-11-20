@@ -210,6 +210,8 @@ def compare_hist(u, v, edges_u, edges_v=None):
     middle_v = [(lb + ub) / 2 for lb, ub in zip(edges_v, edges_v[1:])]
     plt.plot(middle_u, u)
     plt.plot(middle_v, v)
+    plt.plot(middle_u, [sum(u[0:i]) for i in range(len(u))])
+    plt.plot(middle_v, [sum(v[0:i]) for i in range(len(v))])
     plt.show()
     return wasserstein_distance(middle_u, middle_v, u, v)
 
@@ -250,8 +252,12 @@ if __name__ == "__main__":
         # hist_old = np.histogram(ev_old, bin_edges)[0]
 
         # print(compare_hist(hist, hist_old, bin_edges))
-        bin_edges = np.histogram_bin_edges([], 11, range=(-1, 1))
+        bin_edges = np.histogram_bin_edges([], 101, range=(-1, 1))
         hist_est = estimate_histogram(A, bin_edges, 100, 10)
+        # hist_est = [2.04620488e+01, 2.36190088e+02, 1.70991949e+03, 9.30951495e+03,
+        #             2.10427277e+04, 3.25794812e+04, 2.51577341e+04, 9.65254466e+03,
+        #             4.55037917e+02, 5.84172027e+00, 3.69864399e-01]
+        # hist_est = np.array(hist_est) / sum(hist_est)
         print(hist_est)
         hist_old, edges_old = read_histogram(f'100K/evs/{i}.ev')
         print(compare_hist(hist_old, hist_est, edges_old, bin_edges))
