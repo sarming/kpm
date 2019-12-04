@@ -1,13 +1,12 @@
-import re, time
-import networkx as nx
 import numpy as np
-import scipy as sp
 from numpy.polynomial import Chebyshev, Polynomial
 import matplotlib.pyplot as plt
 from profilehooks import profile
+import graphs, read
 
 
 # from functools import wraps
+# import time
 #
 # def timing(f):
 #     @wraps(f)
@@ -19,53 +18,6 @@ from profilehooks import profile
 #           (f.__name__, args, kw, te-ts))
 #         return result
 #     return wrap
-
-def read_metis(file):
-    graph = nx.Graph()
-    with open(file) as f:
-        (n, m) = f.readline().split()
-        for (node, neighbors) in enumerate(f.readlines()):
-            for v in neighbors.split():
-                # print(node, v)
-                graph.add_edge(node, int(v))
-        assert int(n) == graph.number_of_nodes()
-        assert int(m) == graph.number_of_edges()
-    return graph
-
-
-def read_eigvals(file):
-    with open(file) as f:
-        eigvals = np.array([float(x) for x in f.readlines()])
-        return eigvals - 1.0
-
-
-def read_histogram(file, density=False):
-    hist = []
-    bin_edges = []
-    with open(file) as f:
-        for i, line in enumerate(f.readlines()):
-            (lb, ub, n) = map(float, re.split(r'[()\[\]\s\,]+', line)[1:4])
-            hist.append(n)
-            if i == 0:
-                bin_edges.append(lb)
-            assert bin_edges[-1] == lb
-            bin_edges.append(ub)
-
-    bin_edges = np.array(bin_edges)
-    bin_edges -= 1
-
-    hist = np.array(hist)
-    if density:
-        hist /= sum(hist)
-
-    return hist, bin_edges
-
-
-def eigvals(graph):
-    A = shifted_laplacian(graph)
-    vals = np.linalg.eigvalsh(A)
-    return sorted(vals, reverse=True)
-
 
 def jackson_coef(p, j):
     # return 1
@@ -106,12 +58,6 @@ def mat_poly(M, p):
         S += a * A
         A = A @ M
     return S
-
-
-def shifted_laplacian(graph):
-    n = graph.number_of_nodes()
-    laplacian = sp.sparse.csgraph.laplacian(nx.to_scipy_sparse_matrix(graph), normed=True)
-    return sp.sparse.csr_matrix(laplacian - 1 * sp.sparse.eye(n))
 
 
 def kpm_test(A, lb, ub, cheb_degree, num_samples):
@@ -217,8 +163,8 @@ def compare_hist(u, v, edges_u, edges_v=None):
 
 
 if __name__ == "__main__":
-    # hist_old, bin_edges = read_histogram(f'100K/evs/1.ev')
-    # hist_2, bin_edges = read_histogram(f'50K/evs/14.ev')
+    # hist_old, bin_edges = read.histogram(f'100K/evs/1.ev')
+    # hist_2, bin_edges = read.histogram(f'50K/evs/14.ev')
     # print(compare_hist(hist_old, hist_2, bin_edges))
 
     # hist_old, bin_edges = np.histogram(ev_old, 10, range=(-1, 1))
@@ -237,8 +183,8 @@ if __name__ == "__main__":
 
     # exit()
     for i in range(1, 2):
-        graph = read_metis(f'100K/graphs/{i}.metis')
-        A = shifted_laplacian(graph)
+        graph = read.metis(f'100K/graphs/{i}.metis')
+        A = graphs.shifted_laplacian(graph)
         print("read")
         # kpm_test(A, -0.1, 0.1, 80, 100)
 
@@ -246,9 +192,9 @@ if __name__ == "__main__":
         # print()
         # continue
 
-        # ev = eigvals(graph)
+        # ev = graphs.eigvals(graph)
         # hist, bin_edges = np.histogram(ev, 11, range=(-1, 1))
-        # ev_old = read_eigvals(f'1K/evs/{i}.ev')
+        # ev_old = read.eigvals(f'1K/evs/{i}.ev')
         # hist_old = np.histogram(ev_old, bin_edges)[0]
 
         # print(compare_hist(hist, hist_old, bin_edges))
@@ -259,7 +205,7 @@ if __name__ == "__main__":
         #             4.55037917e+02, 5.84172027e+00, 3.69864399e-01]
         # hist_est = np.array(hist_est) / sum(hist_est)
         print(hist_est)
-        hist_old, edges_old = read_histogram(f'100K/evs/{i}.ev')
+        hist_old, edges_old = read.histogram(f'100K/evs/{i}.ev')
         print(compare_hist(hist_old, hist_est, edges_old, bin_edges))
 
         # diff = max(abs(new - old) for (new, old) in zip(ev, ev_old))
