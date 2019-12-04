@@ -12,7 +12,7 @@ def metis(file):
                 graph.add_edge(node, int(v))
         assert int(n) == graph.number_of_nodes()
         assert int(m) == graph.number_of_edges()
-        print(m)
+        # print(m)
     return graph
 
 
