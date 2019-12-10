@@ -1,3 +1,4 @@
+import multiprocessing
 import numpy as np
 from numpy.polynomial import Chebyshev, Polynomial
 import matplotlib.pyplot as plt
@@ -97,23 +98,28 @@ def chebyshev_exact(A, coef):
 @profile
 def chebyshev_estimator(A, coef, num_samples):
     assert len(coef) > 1
-
     n = A.shape[0]
-
-    s = 0.0
-    for k in range(num_samples):
-        v = random_vector(n)
-        w_2 = v
-        w_1 = A @ v
-        sample = coef[0] * v @ w_2 + coef[1] * v @ w_1
-        for c in coef[2:]:
-            w = 2 * A @ w_1 - w_2
-            sample += c * v @ w
-            w_2 = w_1
-            w_1 = w
-
-        s += sample
+    sample_calls = [(A, coef, random_vector(n)) for _ in range(num_samples)]
+    s = sum(pool.starmap(chebyshev_sample, sample_calls))
+    # s = sum(chebyshev_sample(A, coef, random_vector(n)) for x in range(num_samples))
     return n / num_samples * s
+
+
+def chebyshev_sample(A, coef, v):
+    """Return sum_i ( coef_i * v * T_i(A) @ v ) = v * coef(A) @ v."""
+    # T_0(x) = 1
+    # T_1(x) = x
+    # T_n = 2 * T_{n-1} - T_{n-2}
+    # w_i = T_{n-i} * v (we start at n=2)
+    w_2 = v
+    w_1 = A @ v
+    sample = coef[0] * v @ w_2 + coef[1] * v @ w_1
+    for c in coef[2:]:
+        w_0 = 2 * A @ w_1 - w_2
+        sample += c * v @ w_0
+        w_2 = w_1
+        w_1 = w_0
+    return sample
 
 
 def kpm(graph, lb, ub, cheb_degree, num_samples):
@@ -163,6 +169,7 @@ def compare_hist(u, v, edges_u, edges_v=None):
 
 
 if __name__ == "__main__":
+    pool = multiprocessing.Pool()
     # hist_old, bin_edges = read.histogram(f'100K/evs/1.ev')
     # hist_2, bin_edges = read.histogram(f'50K/evs/14.ev')
     # print(compare_hist(hist_old, hist_2, bin_edges))
@@ -183,7 +190,7 @@ if __name__ == "__main__":
 
     # exit()
     for i in range(1, 2):
-        graph = read.metis(f'100K/graphs/{i}.metis')
+        graph = read.metis(f'10K/graphs/{i}.metis')
         A = graphs.shifted_laplacian(graph)
         print("read")
         # kpm_test(A, -0.1, 0.1, 80, 100)
