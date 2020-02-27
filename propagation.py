@@ -1,4 +1,4 @@
-import random
+import random, multiprocessing
 import numpy as np
 import scipy as sp
 import networkx as nx
@@ -21,6 +21,7 @@ def edge_propagate(A, start, depth=1):
     for i in range(depth):
         new_leaves = []
         for node in leaves:
+            # print(A.indptr[node + 1] - A.indptr[node])
             children = edge_sample(A, node)
             children = list(filter(lambda x: not tree.has_node(x), children))
             tree.add_star([node] + children)
@@ -54,14 +55,16 @@ def node_propagate(A, start, prob, depth=1):
 
 
 if __name__ == "__main__":
+    # pool = multiprocessing.Pool()
     for i in range(1, 2):
         graph = read.metis(f'1K/graphs/{i}.metis')
         # print(graph.number_of_nodes())
         A = graphs.uniform_adjacency(graph, 0.1)
         # A = nx.to_scipy_sparse_matrix(graph)
         # tree = node_propagate(A, 0, 0.1, 10)
-        tree = edge_propagate(A, 0, 10)
-        print(tree.number_of_nodes())
+        for i in range(100):
+            tree = edge_propagate(A, 0, 10)
+            print(tree.number_of_nodes())
         # print(nx.nx_pydot.to_pydot(tree))
         nx.draw(tree)
         plt.show()
