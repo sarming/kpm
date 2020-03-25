@@ -54,17 +54,64 @@ def node_propagate(A, start, prob, depth=1):
     return tree
 
 
+def calculate_retweet_probability(graph, authors, p):
+    return sum(1 - (1 - p) ** float(graph.out_degree(a)) for a in authors if graph.has_node(a)) / len(authors)
+
+
+def bin_search(lb, ub, goal, graph, authors):
+    mid = (ub + lb) / 2
+    if ub - lb < 0.000000001:
+        return mid
+    if calculate_retweet_probability(graph, authors, mid) < goal:
+        return bin_search(mid, ub, goal, graph, authors)
+    else:
+        return bin_search(lb, mid, goal, graph, authors)
+
+
+def node_to_index(graph, node):
+    return list(graph.nodes()).index(node)
+
+
+def simulate(authors, graph, edge_probability, n, depth=1):
+    A = graphs.uniform_adjacency(graph, edge_probability)
+    sum_retweeted = 0
+    sum_retweets = 0
+    for start_node in authors:
+        if not graph.has_node(start_node):
+            continue
+        start_node = node_to_index(graph, start_node)
+        retweets = [edge_propagate(A, start_node, depth).number_of_nodes() - 1 for _ in range(n)]
+        sum_retweets += sum(retweets)
+        sum_retweeted += sum(1 for i in retweets if i != 0)
+        # print(".",end="")
+    # print()
+    return sum_retweets / n, sum_retweeted / n
+
+
 if __name__ == "__main__":
     # pool = multiprocessing.Pool()
     for i in range(1, 2):
-        graph = read.metis(f'1K/graphs/{i}.metis')
+        # graph = read.metis(f'1K/graphs/{i}.metis')
+        # graph = read.followers_v("/Users/ian/Nextcloud/followers_v.txt")
+        graphdir = "/Users/ian/Nextcloud/anonymized_twitter_graphs"
+        graph = read.adjlist(f"{graphdir}/anonymized_inner_graph_neos_20200311.adjlist")
+        authors, retweeted = read.feature_authors("/Users/ian/Nextcloud/features_00101010_authors_neos.txt")
+        edge_probability = bin_search(0, 1, retweeted / len(authors), graph, authors)
+        print(f"retweeted: {retweeted}")
+        print(f"goal: {retweeted / len(authors)}")
+        print(f"edge_probability: {edge_probability}")
+        retweets, retweeted = simulate(authors, graph, edge_probability, 1000, 1)
+        print(f"retweets: {retweets}")
+        print(f"retweeted: {retweeted}")
         # print(graph.number_of_nodes())
-        A = graphs.uniform_adjacency(graph, 0.1)
+        # A = graphs.uniform_adjacency(graph, edge_probability)
+        # start_node = random.randrange(0, A.shape[0])
+        # print(sum_retweets / 1000)
         # A = nx.to_scipy_sparse_matrix(graph)
         # tree = node_propagate(A, 0, 0.1, 10)
-        for i in range(100):
-            tree = edge_propagate(A, 0, 10)
-            print(tree.number_of_nodes())
+        # for i in range(1000):
+        #     tree = edge_propagate(A, 0, 1000)
+        #     print(tree.number_of_nodes())
         # print(nx.nx_pydot.to_pydot(tree))
-        nx.draw(tree)
-        plt.show()
+        # nx.draw(tree)
+        # plt.show()
