@@ -58,21 +58,22 @@ def calculate_retweet_probability(graph, authors, p):
     return sum(1 - (1 - p) ** float(graph.out_degree(a)) for a in authors if graph.has_node(a)) / len(authors)
 
 
-def bin_search(lb, ub, goal, graph, authors):
+def bin_search(lb, ub, goal, fun, eps=0.00001):
     mid = (ub + lb) / 2
-    if ub - lb < 0.000000001:
+    print(mid)
+    if ub - lb < eps:
         return mid
-    if calculate_retweet_probability(graph, authors, mid) < goal:
-        return bin_search(mid, ub, goal, graph, authors)
+    if fun(mid) < goal:
+        return bin_search(mid, ub, goal, fun)
     else:
-        return bin_search(lb, mid, goal, graph, authors)
+        return bin_search(lb, mid, goal, fun)
 
 
 def node_to_index(graph, node):
     return list(graph.nodes()).index(node)
 
 
-def simulate(authors, graph, edge_probability, n, depth=1):
+def simulate(graph, authors, edge_probability, n, depth=1):
     A = graphs.uniform_adjacency(graph, edge_probability)
     sum_retweeted = 0
     sum_retweets = 0
@@ -83,7 +84,7 @@ def simulate(authors, graph, edge_probability, n, depth=1):
         retweets = [edge_propagate(A, start_node, depth).number_of_nodes() - 1 for _ in range(n)]
         sum_retweets += sum(retweets)
         sum_retweeted += sum(1 for i in retweets if i != 0)
-        # print(".",end="")
+        # print(".", end="")
     # print()
     return sum_retweets / n, sum_retweeted / n
 
@@ -96,11 +97,15 @@ if __name__ == "__main__":
         graphdir = "/Users/ian/Nextcloud/anonymized_twitter_graphs"
         graph = read.adjlist(f"{graphdir}/anonymized_inner_graph_neos_20200311.adjlist")
         authors, retweeted = read.feature_authors("/Users/ian/Nextcloud/features_00101010_authors_neos.txt")
-        edge_probability = bin_search(0, 1, retweeted / len(authors), graph, authors)
         print(f"retweeted: {retweeted}")
         print(f"goal: {retweeted / len(authors)}")
+        edge_probability = bin_search(0, 1, retweeted / len(authors),
+                                      lambda p: calculate_retweet_probability(graph, authors, p))
+        edge_probability = bin_search(0, edge_probability, 911,
+                                      lambda p: simulate(graph, authors, p, 100, 20)[0])
         print(f"edge_probability: {edge_probability}")
-        retweets, retweeted = simulate(authors, graph, edge_probability, 1000, 1)
+        # retweets, retweeted = simulate(graph, authors,0.003130221739411354 , 1000, 20)
+        retweets, retweeted = simulate(graph, authors, edge_probability, 1000, 20)
         print(f"retweets: {retweets}")
         print(f"retweeted: {retweeted}")
         # print(graph.number_of_nodes())
