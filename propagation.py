@@ -6,15 +6,15 @@ import graphs, read
 import matplotlib.pyplot as plt
 
 
-def edge_sample(A, node):
+def edge_sample(A, node, p):
     children = []
     for i in range(A.indptr[node], A.indptr[node + 1]):
-        if random.random() <= A.data[i]:
+        if random.random() <= A.data[i] * p:
             children.append(A.indices[i])
     return children
 
 
-def edge_propagate(A, start, depth=1):
+def edge_propagate(A, start, depth=1, discount=1.):
     tree = nx.Graph()
     tree.add_node(start)
     leaves = [start]
@@ -22,7 +22,7 @@ def edge_propagate(A, start, depth=1):
         new_leaves = []
         for node in leaves:
             # print(A.indptr[node + 1] - A.indptr[node])
-            children = edge_sample(A, node)
+            children = edge_sample(A, node, discount ** i)
             children = list(filter(lambda x: not tree.has_node(x), children))
             tree.add_star([node] + children)
             new_leaves.extend(children)
@@ -60,10 +60,11 @@ def calculate_retweet_probability(graph, authors, p):
 
 def bin_search(lb, ub, goal, fun, eps=0.00001):
     mid = (ub + lb) / 2
-    print(mid)
     if ub - lb < eps:
         return mid
-    if fun(mid) < goal:
+    f = fun(mid)
+    print(f'f({mid})={f}')
+    if f < goal:
         return bin_search(mid, ub, goal, fun)
     else:
         return bin_search(lb, mid, goal, fun)
@@ -73,7 +74,7 @@ def node_to_index(graph, node):
     return list(graph.nodes()).index(node)
 
 
-def simulate(graph, authors, edge_probability, n, depth=1):
+def simulate(graph, authors, edge_probability, n, depth=1, discount=1.):
     A = graphs.uniform_adjacency(graph, edge_probability)
     sum_retweeted = 0
     sum_retweets = 0
@@ -81,7 +82,7 @@ def simulate(graph, authors, edge_probability, n, depth=1):
         if not graph.has_node(start_node):
             continue
         start_node = node_to_index(graph, start_node)
-        retweets = [edge_propagate(A, start_node, depth).number_of_nodes() - 1 for _ in range(n)]
+        retweets = [edge_propagate(A, start_node, depth, discount).number_of_nodes() - 1 for _ in range(n)]
         sum_retweets += sum(retweets)
         sum_retweeted += sum(1 for i in retweets if i != 0)
         # print(".", end="")
@@ -101,11 +102,14 @@ if __name__ == "__main__":
         print(f"goal: {retweeted / len(authors)}")
         edge_probability = bin_search(0, 1, retweeted / len(authors),
                                       lambda p: calculate_retweet_probability(graph, authors, p))
-        edge_probability = bin_search(0, edge_probability, 911,
-                                      lambda p: simulate(graph, authors, p, 100, 20)[0])
         print(f"edge_probability: {edge_probability}")
+        # discount = bin_search(0, 1, 911,
+        #                               lambda d: simulate(graph, authors, edge_probability, 1000, 10, d)[0])
+        discount = 0.6631584167480469
+        discount = 0.6615333557128906
+        print(f"discount: {discount}")
         # retweets, retweeted = simulate(graph, authors,0.003130221739411354 , 1000, 20)
-        retweets, retweeted = simulate(graph, authors, edge_probability, 1000, 20)
+        retweets, retweeted = simulate(graph, authors, edge_probability, 1000, 10, discount)
         print(f"retweets: {retweets}")
         print(f"retweeted: {retweeted}")
         # print(graph.number_of_nodes())
