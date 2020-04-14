@@ -21,6 +21,7 @@ import graphs, read
 #     return wrap
 
 def jackson_coef(p, j):
+    """Return the j-th Jackson coefficient for degree p Chebyshev polynomial."""
     # return 1
     from numpy import cos, sin, pi
     alpha = pi / (p + 2)
@@ -29,67 +30,33 @@ def jackson_coef(p, j):
     return (a + b) / sin(alpha)
 
 
-def step_coef(a, b, j):
+def step_coef(lb, ub, j):
+    """Return j-th Chebyshev coefficient for [lb, ub] indicator function."""
     from numpy import arccos, sin, pi
     if j == 0:
-        return (arccos(a) - arccos(b)) / pi
-    return 2 / pi * (sin(j * arccos(a)) - np.sin(j * np.arccos(b))) / j
+        return (arccos(lb) - arccos(ub)) / pi
+    return 2 / pi * (sin(j * arccos(lb)) - np.sin(j * np.arccos(ub))) / j
 
 
 def step_jackson_coef(lb, ub, degree):
+    """Return list of degree Chebyshev coefficients for [lb,ub] indicator function (with Jackson smoothing)."""
     return [step_coef(lb, ub, j) * jackson_coef(degree, j) for j in range(degree + 1)]
 
 
 def step(lb, ub, degree):
+    """Return Chebyshev approximation of [lb,ub] indicator function (with Jackson smoothing)."""
     return Chebyshev(step_jackson_coef(lb, ub, degree))
 
 
 def random_vector(n):
+    """Return normalized dimension n random vector."""
     # return np.random.choice([-1, 1], n)
     v = 2 * np.random.rand(n) - 1
     return v / np.linalg.norm(v)
 
 
-def mat_poly(M, p):
-    # return sum(a * np.linalg.matrix_power(M, i) for i, a in enumerate(p))
-    n = M.shape[0]
-    A = np.identity(n)
-    S = np.zeros((n, n))
-    for a in p:
-        S += a * A
-        A = A @ M
-    return S
-
-
-def kpm_test(A, lb, ub, cheb_degree, num_samples):
-    n = A.shape[0]
-
-    # lb -= 1
-    # ub -= 1
-
-    h = Chebyshev(step_jackson_coef(lb, ub, cheb_degree))
-
-    # print(sum(l >= 0.5 for l in np.linalg.eigvals(A)))
-    print("Chebychev ", sum(h(l) for l in np.linalg.eigvalsh(A)))
-
-    h_poly = h.convert(kind=Polynomial)
-    print("Polynomial", sum(h_poly(l) for l in np.linalg.eigvalsh(A)))
-
-    x = np.arange(-1, 1, 0.0001)
-    # plt.plot(x, h_poly(x))
-    plt.plot(x, h(x))
-    plt.show()
-
-    hA = mat_poly(A, h_poly.coef)
-    print("Trace h(A)", np.trace(hA))
-
-    # print(hA.dot(random_vector(N)))
-    # print(hA)
-    s = sum(v @ hA @ v for v in (random_vector(n) for i in range(num_samples)))
-    print("Estimator ", n * s / num_samples)
-
-
 def chebyshev_exact(A, coef):
+    """Return trace of coef(A)."""
     h = Chebyshev(coef)
     vals = np.linalg.eigvalsh(A)
     return sum(h(l) for l in vals)
@@ -97,6 +64,7 @@ def chebyshev_exact(A, coef):
 
 # @profile
 def chebyshev_estimator(A, coef, num_samples):
+    """Estimate trace of coef(A) with num_samples via Hutchinson's estimator."""
     assert len(coef) > 1
     n = A.shape[0]
     # sample_calls = [(A, coef, random_vector(n)) for _ in range(num_samples)]
@@ -158,7 +126,39 @@ def chebyshev_sample(A, coef, v, return_all=False):
     return samples if return_all else sample
 
 
-def kpm(graph, lb, ub, cheb_degree, num_samples):
+def kpm_test(A, lb, ub, cheb_degree, num_samples):
+    """Run simpler inefficient implementations of KPM."""
+
+    def mat_poly(M, p):
+        """Return p(M) for polynomial p and matrix M."""
+        # return sum(a * np.linalg.matrix_power(M, i) for i, a in enumerate(p))
+        n = M.shape[0]
+        A = np.identity(n)
+        S = np.zeros((n, n))
+        for a in p:
+            S += a * A
+            A = A @ M
+        return S
+
+    n = A.shape[0]
+    eigvals = np.linalg.eigvalsh(A)
+    h = step(lb, ub, cheb_degree)
+
+    print("Chebyshev ", sum(h(l) for l in eigvals))
+
+    h_poly = h.convert(kind=Polynomial)
+    print("Polynomial", sum(h_poly(l) for l in eigvals))
+
+    hA = mat_poly(A, h_poly.coef)
+    print("Trace h(A)", np.trace(hA))
+
+    # print(hA.dot(random_vector(N)))
+    # print(hA)
+    s = sum(v @ hA @ v for v in (random_vector(n) for _ in range(num_samples)))
+    print("Estimator ", n * s / num_samples)
+
+
+def kpm(A, lb, ub, cheb_degree, num_samples):
     # lb -= 1
     # ub -= 1
 
