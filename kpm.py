@@ -2,7 +2,7 @@ import multiprocessing
 import numpy as np
 from numpy.polynomial import Chebyshev, Polynomial
 import matplotlib.pyplot as plt
-from profilehooks import profile
+from profilehooks import profile, timecall
 import graphs, read
 
 
@@ -95,17 +95,50 @@ def chebyshev_exact(A, coef):
     return sum(h(l) for l in vals)
 
 
-@profile
+# @profile
 def chebyshev_estimator(A, coef, num_samples):
     assert len(coef) > 1
     n = A.shape[0]
-    sample_calls = [(A, coef, random_vector(n)) for _ in range(num_samples)]
-    s = sum(pool.starmap(chebyshev_sample, sample_calls))
-    # s = sum(chebyshev_sample(A, coef, random_vector(n)) for x in range(num_samples))
+    # sample_calls = [(A, coef, random_vector(n)) for _ in range(num_samples)]
+    # s = sum(pool.starmap(chebyshev_sample, sample_calls))
+    s = sum(chebyshev_sample(A, coef, random_vector(n)) for _ in range(num_samples))
     return n / num_samples * s
 
 
-def chebyshev_sample(A, coef, v):
+pool_A = None
+pool_coef = None
+pool_n = None
+
+
+def pool_initialize(A, coef, n):
+    global pool_A
+    global pool_coef
+    global pool_n
+    pool_A = A
+    pool_coef = coef
+    pool_n = n
+
+
+def pool_sample():
+    global pool_A
+    global pool_coef
+    global pool_n
+    return pool_n * chebyshev_sample(pool_A, pool_coef, random_vector(pool_n))
+
+
+# @profile
+def sample_parallel(A, coef, num_samples):
+    assert len(coef) > 1
+    n = A.shape[0]
+    with multiprocessing.Pool(initializer=pool_initialize, initargs=(A, coef, n)) as pool:
+        # sample_calls = [(A, coef, random_vector(n)) for _ in range(num_samples)]
+        # samples = pool.starmap(chebyshev_sample, sample_calls)
+        samples = pool.starmap(pool_sample, [() for _ in range(num_samples)])
+    # return n * samples
+    return samples
+
+
+def chebyshev_sample(A, coef, v, return_all=False):
     """Return sum_i ( coef_i * v * T_i(A) @ v ) = v * coef(A) @ v."""
     # T_0(x) = 1
     # T_1(x) = x
@@ -114,12 +147,15 @@ def chebyshev_sample(A, coef, v):
     w_2 = v
     w_1 = A @ v
     sample = coef[0] * v @ w_2 + coef[1] * v @ w_1
+    samples = []
     for c in coef[2:]:
         w_0 = 2 * A @ w_1 - w_2
         sample += c * v @ w_0
         w_2 = w_1
         w_1 = w_0
-    return sample
+        if return_all:
+            samples.append(sample)
+    return samples if return_all else sample
 
 
 def kpm(graph, lb, ub, cheb_degree, num_samples):
@@ -134,11 +170,13 @@ def kpm(graph, lb, ub, cheb_degree, num_samples):
     print("Estimated", chebyshev_estimator(A, coef, num_samples))
 
 
+@timecall
 def estimate_histogram(A, bin_edges, cheb_degree, num_samples):
     hist = []
     for lb, ub in zip(bin_edges, bin_edges[1:]):
         coef = step_jackson_coef(lb, ub, cheb_degree)
-        estimate = chebyshev_estimator(A, coef, num_samples)
+        # estimate = chebyshev_estimator(A, coef, num_samples)
+        estimate = sum(sample_parallel(A, coef, num_samples)) / num_samples
         hist.append(estimate)
         print('.')
     return np.array(hist)
@@ -169,7 +207,7 @@ def compare_hist(u, v, edges_u, edges_v=None):
 
 
 if __name__ == "__main__":
-    pool = multiprocessing.Pool()
+    # pool = multiprocessing.Pool()
     # hist_old, bin_edges = read.histogram(f'100K/evs/1.ev')
     # hist_2, bin_edges = read.histogram(f'50K/evs/14.ev')
     # print(compare_hist(hist_old, hist_2, bin_edges))
@@ -190,14 +228,16 @@ if __name__ == "__main__":
 
     # exit()
     for i in range(1, 2):
-        graph = read.metis(f'10K/graphs/{i}.metis')
+        graph = read.metis(f'100K/graphs/{i}.metis')
         A = graphs.shifted_laplacian(graph)
         print("read")
         # kpm_test(A, -0.1, 0.1, 80, 100)
 
+        print(estimate_histogram(A, [0.63 - 1, 0.65 - 1], 200, 1))
+
         # kpm(A, 0.21, 0.23, 500, 50)
         # print()
-        # continue
+        continue
 
         # ev = graphs.eigvals(graph)
         # hist, bin_edges = np.histogram(ev, 11, range=(-1, 1))
@@ -205,9 +245,9 @@ if __name__ == "__main__":
         # hist_old = np.histogram(ev_old, bin_edges)[0]
 
         # print(compare_hist(hist, hist_old, bin_edges))
-        bin_edges = np.histogram_bin_edges([], 101, range=(-1, 1))
+        bin_edges = np.histogram_bin_edges([], 5, range=(-1, 1))
         # print(repr(bin_edges))
-        hist_est = estimate_histogram(A, bin_edges, 100, 90)
+        hist_est = estimate_histogram(A, bin_edges, 20, 1000)
         # hist_est = [2.04620488e+01, 2.36190088e+02, 1.70991949e+03, 9.30951495e+03,
         #             2.10427277e+04, 3.25794812e+04, 2.51577341e+04, 9.65254466e+03,
         #             4.55037917e+02, 5.84172027e+00, 3.69864399e-01]
