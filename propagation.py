@@ -24,11 +24,12 @@ def edge_propagate(A, start, depth=1, discount=1.):
             # print(A.indptr[node + 1] - A.indptr[node])
             children = edge_sample(A, node, discount ** i)
             children = list(filter(lambda x: not tree.has_node(x), children))
-            tree.add_star([node] + children)
+            nx.add_star(tree, [node] + children)
             new_leaves.extend(children)
         leaves = new_leaves
     return tree
-
+def edge_propagate_count(A, start, depth=1, discount=1.):
+    return edge_propagate(A, start, depth, discount).number_of_nodes() - 1
 
 def neighbors(A, node):
     return A.indices[A.indptr[node]:A.indptr[node + 1]]
@@ -49,7 +50,7 @@ def node_propagate(A, start, prob, depth=1):
                 children = neighbors(A, node)
                 children = list(filter(lambda x: not tree.has_node(x), children))
                 new_leaves.extend(children)
-                tree.add_star([node] + children)
+                nx.add_star(tree, [node] + children)
         leaves = new_leaves
     return tree
 
@@ -82,6 +83,8 @@ def simulate(graph, authors, edge_probability, n, depth=1, discount=1.):
         if not graph.has_node(start_node):
             continue
         start_node = node_to_index(graph, start_node)
+        #sample_calls = [(A, start_node, depth, discount) for _ in range(n)]
+        #retweets = pool.starmap(edge_propagate_count, sample_calls)
         retweets = [edge_propagate(A, start_node, depth, discount).number_of_nodes() - 1 for _ in range(n)]
         sum_retweets += sum(retweets)
         sum_retweeted += sum(1 for i in retweets if i != 0)
@@ -91,22 +94,22 @@ def simulate(graph, authors, edge_probability, n, depth=1, discount=1.):
 
 
 if __name__ == "__main__":
-    # pool = multiprocessing.Pool()
+    pool = multiprocessing.Pool()
     for i in range(1, 2):
         # graph = read.metis(f'1K/graphs/{i}.metis')
         # graph = read.followers_v("/Users/ian/Nextcloud/followers_v.txt")
-        graphdir = "/Users/ian/Nextcloud/anonymized_twitter_graphs"
-        graph = read.adjlist(f"{graphdir}/anonymized_inner_graph_neos_20200311.adjlist")
-        authors, retweeted = read.feature_authors("/Users/ian/Nextcloud/features_00101010_authors_neos.txt")
+        graphdir = "/home/d3000/d300345/anonymized_twitter_graphs"
+        graph = read.adjlist(f"{graphdir}/anonymized_outer_graph_neos_20200311.adjlist")
+        authors, retweeted = read.feature_authors("../features_00101010_authors_neos.txt")
         print(f"retweeted: {retweeted}")
         print(f"goal: {retweeted / len(authors)}")
         edge_probability = bin_search(0, 1, retweeted / len(authors),
                                       lambda p: calculate_retweet_probability(graph, authors, p))
         print(f"edge_probability: {edge_probability}")
-        # discount = bin_search(0, 1, 911,
-        #                               lambda d: simulate(graph, authors, edge_probability, 1000, 10, d)[0])
-        discount = 0.6631584167480469
-        discount = 0.6615333557128906
+        discount = bin_search(0, 1, 911,
+                                      lambda d: simulate(graph, authors, edge_probability, 100, 10, d)[0])
+        #discount = 0.6631584167480469
+        #discount = 0.6615333557128906
         print(f"discount: {discount}")
         # retweets, retweeted = simulate(graph, authors,0.003130221739411354 , 1000, 20)
         retweets, retweeted = simulate(graph, authors, edge_probability, 1000, 10, discount)
