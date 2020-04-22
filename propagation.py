@@ -101,33 +101,34 @@ def node_to_index(graph, node):
     return list(graph.nodes()).index(node)
 
 
+def simulate(A, source, samples=1, p=1., discount=1., depth=1):
+    return [edge_propagate_count(A, source, p=p, discount=discount, depth=depth) for _ in range(samples)]
+
+
 @timecall
-def simulate(A, sources, samples=1, p=1., depth=1, discount=1.):
-    sum_retweeted = 0
-    sum_retweets = 0
-    for source in sources:
-        # sample_calls = [(A, source, p, discount, depth) for _ in range(samples)]
-        # retweets = pool.starmap(edge_propagate_count, sample_calls)
-        retweets = [edge_propagate_count(A, source, p=p, discount=discount, depth=depth) for _ in range(samples)]
-        sum_retweets += sum(retweets)
-        sum_retweeted += sum(1 for i in retweets if i != 0)
-        # print(".", end="")
-    # print()
+def replay(A, sources, samples=1, p=1., discount=1., depth=1):
+    sample_calls = [(A, source, samples, p, discount, depth) for source in sources]
+    retweets = pool.starmap(simulate, sample_calls)
+    # retweets = [simulate(A, source, samples=samples, p=p, discount=discount, depth=depth) for source in sources]
+    retweets = [t for ts in retweets for t in ts if t != 0]  # Flatten and remove zeros
+    sum_retweets = sum(retweets)
+    sum_retweeted = len(retweets)
     return sum_retweets / samples, sum_retweeted / samples
 
 
-def search_parameters(A, sources, retweeted, retweets):
+def search_parameters(A, sources, retweeted, retweets, samples=100, eps=0.00001):
     edge_probability = bin_search(0, 1, retweeted / len(sources),
-                                  lambda p: calculate_retweet_probability(A, sources, p))
+                                  lambda p: calculate_retweet_probability(A, sources, p), eps=eps)
     print(f'edge_probability: {edge_probability}')
     discount = bin_search(0, 1, retweets,
-                          lambda d: simulate(A, sources, samples=100, p=edge_probability, discount=d, depth=10)[0])
+                          lambda d: replay(A, sources, samples=samples, p=edge_probability, discount=d, depth=10)[0],
+                          eps=eps)
     print(f'discount: {discount}')
     return edge_probability, discount
 
 
 if __name__ == "__main__":
-    # pool = ray.util.multiprocessing.Pool(processes=32)
+    pool = ray.util.multiprocessing.Pool(processes=32)
     for i in range(1, 2):
         # graph = read.metis(f'1K/graphs/{i}.metis')
         # graph = read.followers_v("/Users/ian/Nextcloud/followers_v.txt")
@@ -151,7 +152,7 @@ if __name__ == "__main__":
 
         # discount = 0.6631584167480469
         # discount = 0.6615333557128906
-        retweets, retweeted = simulate(A, sources, samples=1000, p=edge_probability, discount=discount, depth=10)
+        retweets, retweeted = replay(A, sources, samples=1000, p=edge_probability, discount=discount, depth=10)
         print(f"retweets: {retweets}")
         print(f"retweeted: {retweeted}")
         # print(graph.number_of_nodes())
