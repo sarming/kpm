@@ -45,7 +45,7 @@ def edge_propagate_count(A, start, p=1., discount=1., depth=1):
     visited = {start}
     leaves = {start}
     for i in range(depth):
-        next_leaves = []
+        next_leaves = set()
         for node in leaves:
             children = set(edge_sample_ignore_data(A, node, p * discount ** i))
             children = children - visited
@@ -79,8 +79,10 @@ def node_propagate(A, start, prob, depth=1):
     return tree
 
 
-def calculate_retweet_probability(graph, authors, p):
-    return sum(1 - (1 - p) ** float(graph.out_degree(a)) for a in authors if graph.has_node(a)) / len(authors)
+def calculate_retweet_probability(A, sources, p):
+    return sum(1 - (1 - p) ** float(A.indptr[a + 1] - A.indptr[a]) for a in sources) / len(sources)
+    # return sum(1 - (1 - p) ** float(A.getrow(a).getnnz()) for a in sources) / len(sources)
+    # return sum(1 - (1 - p) ** float(graph.out_degree(a)) for a in authors if graph.has_node(a)) / len(authors)
 
 
 def bin_search(lb, ub, goal, fun, eps=0.00001):
@@ -114,6 +116,16 @@ def simulate(A, sources, samples=1, p=1., depth=1, discount=1.):
     return sum_retweets / samples, sum_retweeted / samples
 
 
+def search_parameters(A, sources, retweeted, retweets):
+    edge_probability = bin_search(0, 1, retweeted / len(sources),
+                                  lambda p: calculate_retweet_probability(A, sources, p))
+    print(f'edge_probability: {edge_probability}')
+    discount = bin_search(0, 1, retweets,
+                          lambda d: simulate(A, sources, samples=100, p=edge_probability, discount=d, depth=10)[0])
+    print(f'discount: {discount}')
+    return edge_probability, discount
+
+
 if __name__ == "__main__":
     # pool = ray.util.multiprocessing.Pool(processes=32)
     for i in range(1, 2):
@@ -128,9 +140,7 @@ if __name__ == "__main__":
         A = graphs.uniform_adjacency(graph, 1.)
         sources = [node_to_index(graph, a) for a in authors if graph.has_node(a)]
 
-        edge_probability = bin_search(0, 1, retweeted / len(authors),
-                                      lambda p: calculate_retweet_probability(graph, authors, p))
-        print(f"edge_probability: {edge_probability}")
+        edge_probability, discount = search_parameters(A, sources, retweeted, 911)
 
         # for i in range(10):
         #     tree = edge_propagate(A, 2, p=edge_probability, discount=0.8, depth=100)
@@ -139,11 +149,8 @@ if __name__ == "__main__":
         #     nx.draw(tree)
         #     plt.show()
 
-        discount = bin_search(0, 1, 911,
-                              lambda d: simulate(A, sources, samples=100, p=edge_probability, discount=d, depth=10)[0])
         # discount = 0.6631584167480469
         # discount = 0.6615333557128906
-        print(f"discount: {discount}")
         retweets, retweeted = simulate(A, sources, samples=1000, p=edge_probability, discount=discount, depth=10)
         print(f"retweets: {retweets}")
         print(f"retweeted: {retweeted}")
