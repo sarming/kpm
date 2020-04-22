@@ -1,7 +1,9 @@
 import random, multiprocessing
+import ray.util.multiprocessing
 import numpy as np
 import scipy as sp
 import networkx as nx
+from profilehooks import profile, timecall
 import graphs, read
 import matplotlib.pyplot as plt
 
@@ -14,7 +16,15 @@ def edge_sample(A, node, p):
     return children
 
 
-def edge_propagate(A, start, depth=1, discount=1.):
+def edge_sample_ignore_data(A, node, p):
+    l, r = A.indptr[node], A.indptr[node + 1]
+    if l == r:
+        return []
+    num = np.random.binomial(r - l, p)
+    return np.random.choice(A.indices[l:r], num, replace=False)
+
+
+def edge_propagate(A, start, p=1., discount=1., depth=1):
     tree = nx.Graph()
     tree.add_node(start)
     leaves = [start]
@@ -22,14 +32,28 @@ def edge_propagate(A, start, depth=1, discount=1.):
         new_leaves = []
         for node in leaves:
             # print(A.indptr[node + 1] - A.indptr[node])
-            children = edge_sample(A, node, discount ** i)
+            children = edge_sample_ignore_data(A, node, p * discount ** i)
             children = list(filter(lambda x: not tree.has_node(x), children))
             nx.add_star(tree, [node] + children)
             new_leaves.extend(children)
         leaves = new_leaves
     return tree
-def edge_propagate_count(A, start, depth=1, discount=1.):
-    return edge_propagate(A, start, depth, discount).number_of_nodes() - 1
+
+
+def edge_propagate_count(A, start, p=1., discount=1., depth=1):
+    # return edge_propagate(A, start, p, discount, depth).number_of_nodes() - 1
+    visited = {start}
+    leaves = {start}
+    for i in range(depth):
+        next_leaves = []
+        for node in leaves:
+            children = set(edge_sample_ignore_data(A, node, p * discount ** i))
+            children = children - visited
+            next_leaves |= children
+            visited |= children
+        leaves = next_leaves
+    return len(visited) - 1
+
 
 def neighbors(A, node):
     return A.indices[A.indptr[node]:A.indptr[node + 1]]
@@ -75,44 +99,52 @@ def node_to_index(graph, node):
     return list(graph.nodes()).index(node)
 
 
-def simulate(graph, authors, edge_probability, n, depth=1, discount=1.):
-    A = graphs.uniform_adjacency(graph, edge_probability)
+@timecall
+def simulate(A, sources, samples=1, p=1., depth=1, discount=1.):
     sum_retweeted = 0
     sum_retweets = 0
-    for start_node in authors:
-        if not graph.has_node(start_node):
-            continue
-        start_node = node_to_index(graph, start_node)
-        #sample_calls = [(A, start_node, depth, discount) for _ in range(n)]
-        #retweets = pool.starmap(edge_propagate_count, sample_calls)
-        retweets = [edge_propagate(A, start_node, depth, discount).number_of_nodes() - 1 for _ in range(n)]
+    for source in sources:
+        # sample_calls = [(A, source, p, discount, depth) for _ in range(samples)]
+        # retweets = pool.starmap(edge_propagate_count, sample_calls)
+        retweets = [edge_propagate_count(A, source, p=p, discount=discount, depth=depth) for _ in range(samples)]
         sum_retweets += sum(retweets)
         sum_retweeted += sum(1 for i in retweets if i != 0)
         # print(".", end="")
     # print()
-    return sum_retweets / n, sum_retweeted / n
+    return sum_retweets / samples, sum_retweeted / samples
 
 
 if __name__ == "__main__":
-    pool = multiprocessing.Pool()
+    # pool = ray.util.multiprocessing.Pool(processes=32)
     for i in range(1, 2):
         # graph = read.metis(f'1K/graphs/{i}.metis')
         # graph = read.followers_v("/Users/ian/Nextcloud/followers_v.txt")
-        graphdir = "/home/d3000/d300345/anonymized_twitter_graphs"
-        graph = read.adjlist(f"{graphdir}/anonymized_outer_graph_neos_20200311.adjlist")
-        authors, retweeted = read.feature_authors("../features_00101010_authors_neos.txt")
+        graphdir = '/home/sarming'
+        graph = read.adjlist(f'{graphdir}/anonymized_inner_graph_neos_20200311.adjlist')
+        authors, retweeted = read.feature_authors(f'{graphdir}/features_00101010_authors_neos.txt')
         print(f"retweeted: {retweeted}")
         print(f"goal: {retweeted / len(authors)}")
+
+        A = graphs.uniform_adjacency(graph, 1.)
+        sources = [node_to_index(graph, a) for a in authors if graph.has_node(a)]
+
         edge_probability = bin_search(0, 1, retweeted / len(authors),
                                       lambda p: calculate_retweet_probability(graph, authors, p))
         print(f"edge_probability: {edge_probability}")
+
+        # for i in range(10):
+        #     tree = edge_propagate(A, 2, p=edge_probability, discount=0.8, depth=100)
+        #     print(tree.number_of_nodes())
+        #     print(nx.nx_pydot.to_pydot(tree))
+        #     nx.draw(tree)
+        #     plt.show()
+
         discount = bin_search(0, 1, 911,
-                                      lambda d: simulate(graph, authors, edge_probability, 100, 10, d)[0])
-        #discount = 0.6631584167480469
-        #discount = 0.6615333557128906
+                              lambda d: simulate(A, sources, samples=100, p=edge_probability, discount=d, depth=10)[0])
+        # discount = 0.6631584167480469
+        # discount = 0.6615333557128906
         print(f"discount: {discount}")
-        # retweets, retweeted = simulate(graph, authors,0.003130221739411354 , 1000, 20)
-        retweets, retweeted = simulate(graph, authors, edge_probability, 1000, 10, discount)
+        retweets, retweeted = simulate(A, sources, samples=1000, p=edge_probability, discount=discount, depth=10)
         print(f"retweets: {retweets}")
         print(f"retweeted: {retweeted}")
         # print(graph.number_of_nodes())
@@ -121,9 +153,3 @@ if __name__ == "__main__":
         # print(sum_retweets / 1000)
         # A = nx.to_scipy_sparse_matrix(graph)
         # tree = node_propagate(A, 0, 0.1, 10)
-        # for i in range(1000):
-        #     tree = edge_propagate(A, 0, 1000)
-        #     print(tree.number_of_nodes())
-        # print(nx.nx_pydot.to_pydot(tree))
-        # nx.draw(tree)
-        # plt.show()
