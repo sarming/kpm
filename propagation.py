@@ -9,7 +9,7 @@ import graphs, read
 import matplotlib.pyplot as plt
 
 
-def edge_sample(A, node, p):
+def edge_sample_weighted(A, node, p):
     children = []
     for i in range(A.indptr[node], A.indptr[node + 1]):
         if random.random() <= A.data[i] * p:
@@ -17,15 +17,17 @@ def edge_sample(A, node, p):
     return children
 
 
-def edge_sample_ignore_data(A, node, p):
+def edge_sample(A, node, p):
     l, r = A.indptr[node], A.indptr[node + 1]
     if l == r:
         return []
     num = np.random.binomial(r - l, p)
-    return np.random.choice(A.indices[l:r], num, replace=False)
+
+    children = A.indices[l:r]
+    return np.random.choice(children, num, replace=False)
 
 
-def edge_propagate(A, start, p=1., discount=1., depth=1):
+def edge_propagate_tree(A, start, p=1., discount=1., depth=1):
     tree = nx.Graph()
     tree.add_node(start)
     leaves = [start]
@@ -33,22 +35,26 @@ def edge_propagate(A, start, p=1., discount=1., depth=1):
         new_leaves = []
         for node in leaves:
             # print(A.indptr[node + 1] - A.indptr[node])
-            children = edge_sample_ignore_data(A, node, p * discount ** i)
+            children = edge_sample(A, node, p * discount ** i)
             children = list(filter(lambda x: not tree.has_node(x), children))
             nx.add_star(tree, [node] + children)
             new_leaves.extend(children)
         leaves = new_leaves
+    # print(tree.number_of_nodes())
+    # print(nx.nx_pydot.to_pydot(tree))
+    # nx.draw(tree)
+    # plt.show()
     return tree
 
 
-def edge_propagate_count(A, start, p=1., discount=1., depth=1):
+def edge_propagate(A, start, p=1., discount=1., depth=1):
     # return edge_propagate(A, start, p, discount, depth).number_of_nodes() - 1
     visited = {start}
     leaves = {start}
     for i in range(depth):
         next_leaves = set()
         for node in leaves:
-            children = set(edge_sample_ignore_data(A, node, p * discount ** i))
+            children = set(edge_sample(A, node, p * discount ** i))
             children = children - visited
             next_leaves |= children
             visited |= children
@@ -56,7 +62,7 @@ def edge_propagate_count(A, start, p=1., discount=1., depth=1):
     return len(visited) - 1
 
 
-def neighbors(A, node):
+def children(A, node):
     return A.indices[A.indptr[node]:A.indptr[node + 1]]
 
 
@@ -72,7 +78,7 @@ def node_propagate(A, start, prob, depth=1):
         new_leaves = []
         for node in leaves:
             if random.random() <= prob[node]:
-                children = neighbors(A, node)
+                children = children(A, node)
                 children = list(filter(lambda x: not tree.has_node(x), children))
                 new_leaves.extend(children)
                 nx.add_star(tree, [node] + children)
@@ -100,7 +106,7 @@ def bin_search(lb, ub, goal, fun, eps=0.00001):
 
 # @profile
 def simulate(A, source, samples=1, p=1., discount=1., depth=1):
-    return [edge_propagate_count(A, source, p=p, discount=discount, depth=depth) for _ in range(samples)]
+    return [edge_propagate(A, source, p=p, discount=discount, depth=depth) for _ in range(samples)]
 
 
 # @timecall
@@ -125,7 +131,7 @@ def search_parameters(A, sources, retweeted, retweets, samples=100, eps=0.00001)
     return edge_probability, discount
 
 
-def tweets_to_features(tweets):
+def features_from_tweets(tweets):
     features = tweets.groupby(['author_feature', 'tweet_feature']).agg(
         tweets=('source', 'size'),
         retweeted=('retweets', np.count_nonzero),
@@ -142,7 +148,7 @@ class Simulation:
         self.A, node_labels = read.labelled_graph(graphfile)
 
         self.tweets = read.tweets(tweetfile, node_labels)
-        self.features = tweets_to_features(self.tweets)
+        self.features = features_from_tweets(self.tweets)
         self.sources = self.tweets.dropna().groupby('author_feature')['source'].unique()
 
     def sample_feature(self, size=None):
@@ -183,44 +189,11 @@ class Simulation:
 
 
 if __name__ == "__main__":
+    # pool = ray.util.multiprocessing.Pool(processes=32)
+
     datadir = '/Users/ian/Nextcloud'
     # datadir = '/home/sarming'
     # read.adjlist(f'{datadir}/anonymized_outer_graph_neos_20200311.adjlist',
     #              save_as=f'{datadir}/outer_neos.npz')
     sim = Simulation(f'{datadir}/outer_neos.npz', f'{datadir}/authors_tweets_features_neos.csv')
     sim.search_parameters(1, 0.5)
-    # pool = ray.util.multiprocessing.Pool(processes=32)
-    # graph = read.metis(f'1K/graphs/{i}.metis')
-    # graph = read.followers_v("/Users/ian/Nextcloud/followers_v.txt")
-    # graph = read.adjlist(f'{graphdir}/anonymized_outer_graph_neos_20200311.adjlist')
-    # authors, retweeted = read.feature_authors(f'{graphdir}/features_00101010_authors_neos.txt')
-    # print(f"retweeted: {retweeted}")
-    # print(f"goal: {retweeted / len(authors)}")
-
-    # A = graphs.uniform_adjacency(graph, 1.)
-    # sources = [node_to_index(graph, a) for a in authors if graph.has_node(a)]
-    # sp.sparse.save_npz(f'{graphdir}/anonymized_outer_graph_neos_20200311.npz',A)
-    # np.save(f'{graphdir}/features_00101010_authors_neos.npy', sources)
-    # A = sp.sparse.load_npz(f'{graphdir}/anonymized_outer_graph_neos_20200311.npz')
-    # sources = np.load(f'{graphdir}/features_00101010_authors_neos.npy')
-
-    # edge_probability, discount = search_parameters(A, sources, retweeted, 911)
-
-    # for i in range(10):
-    #     tree = edge_propagate(A, 2, p=edge_probability, discount=0.8, depth=100)
-    #     print(tree.number_of_nodes())
-    #     print(nx.nx_pydot.to_pydot(tree))
-    #     nx.draw(tree)
-    #     plt.show()
-
-    # discount = 0.6631584167480469
-    # discount = 0.6615333557128906
-    # retweets, retweeted = replay(A, sources, samples=1000, p=edge_probability, discount=discount, depth=10)
-    # print(f"retweets: {retweets}")
-    # print(f"retweeted: {retweeted}")
-    # print(graph.number_of_nodes())
-    # A = graphs.uniform_adjacency(graph, edge_probability)
-    # start_node = random.randrange(0, A.shape[0])
-    # print(sum_retweets / 1000)
-    # A = nx.to_scipy_sparse_matrix(graph)
-    # tree = node_propagate(A, 0, 0.1, 10)

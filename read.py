@@ -5,9 +5,6 @@ import numpy as np
 import scipy as sp
 
 
-# from profilehooks import profile, timecall
-
-
 def metis(file):
     graph = nx.Graph()
     with open(file) as f:
@@ -37,16 +34,7 @@ def followers_v(file):
 
 
 def adjlist(file, save_as=None):
-    # return nx.read_adjlist(file, nodetype=int, create_using=nx.DiGraph)
-    graph = nx.DiGraph()
-    with open(file) as f:
-        for line in f.readlines():
-            start, *neighbors = map(int, line.split())
-            for v in neighbors:
-                # print(start, v)
-                graph.add_edge(start, int(v))
-        print(graph.number_of_nodes(), graph.number_of_edges())
-        # print(m)
+    graph = nx.read_adjlist(file, nodetype=int, create_using=nx.DiGraph)
     if save_as:
         save_labelled_graph(save_as, nx.to_scipy_sparse_matrix(graph), graph.nodes())
     return graph
@@ -54,14 +42,14 @@ def adjlist(file, save_as=None):
 
 def save_labelled_graph(filename, A, node_labels):
     # np.savez_compressed(filename, data=A.data, indices=A.indices, indptr=A.indptr, shape=A.shape, node_list=node_labels)
-    np.savez(filename, data=A.data, indices=A.indices, indptr=A.indptr, shape=A.shape, node_list=node_labels)
+    np.savez(filename, data=A.data, indices=A.indices, indptr=A.indptr, shape=A.shape, node_labels=node_labels)
 
 
 def labelled_graph(filename):
     loader = np.load(filename)
     A = sp.sparse.csr_matrix((loader['data'], loader['indices'], loader['indptr']),
                              shape=loader['shape'])
-    node_list = loader['node_list']
+    node_list = loader['node_labels']
     return A, node_list
 
 
