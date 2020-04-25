@@ -3,6 +3,7 @@ import ray.util.multiprocessing
 import numpy as np
 import scipy as sp
 import networkx as nx
+import pandas as pd
 from profilehooks import profile, timecall
 import graphs, read
 import matplotlib.pyplot as plt
@@ -90,26 +91,23 @@ def bin_search(lb, ub, goal, fun, eps=0.00001):
     if ub - lb < eps:
         return mid
     f = fun(mid)
-    print(f'f({mid})={f}')
+    # print(f'f({mid})={f}')
     if f < goal:
         return bin_search(mid, ub, goal, fun)
     else:
         return bin_search(lb, mid, goal, fun)
 
 
-def node_to_index(graph, node):
-    return list(graph.nodes()).index(node)
-
-
+# @profile
 def simulate(A, source, samples=1, p=1., discount=1., depth=1):
     return [edge_propagate_count(A, source, p=p, discount=discount, depth=depth) for _ in range(samples)]
 
 
-@timecall
+# @timecall
 def replay(A, sources, samples=1, p=1., discount=1., depth=1):
-    sample_calls = [(A, source, samples, p, discount, depth) for source in sources]
-    retweets = pool.starmap(simulate, sample_calls)
-    # retweets = [simulate(A, source, samples=samples, p=p, discount=discount, depth=depth) for source in sources]
+    # sample_calls = [(A, source, samples, p, discount, depth) for source in sources]
+    # retweets = pool.starmap(simulate, sample_calls)
+    retweets = [simulate(A, source, samples=samples, p=p, discount=discount, depth=depth) for source in sources]
     retweets = [t for ts in retweets for t in ts if t != 0]  # Flatten and remove zeros
     sum_retweets = sum(retweets)
     sum_retweeted = len(retweets)
@@ -119,45 +117,110 @@ def replay(A, sources, samples=1, p=1., discount=1., depth=1):
 def search_parameters(A, sources, retweeted, retweets, samples=100, eps=0.00001):
     edge_probability = bin_search(0, 1, retweeted / len(sources),
                                   lambda p: calculate_retweet_probability(A, sources, p), eps=eps)
-    print(f'edge_probability: {edge_probability}')
+    # print(f'edge_probability: {edge_probability}')
     discount = bin_search(0, 1, retweets,
                           lambda d: replay(A, sources, samples=samples, p=edge_probability, discount=d, depth=10)[0],
                           eps=eps)
-    print(f'discount: {discount}')
+    # print(f'discount: {discount}')
     return edge_probability, discount
 
 
+def tweets_to_features(tweets):
+    features = tweets.groupby(['author_feature', 'tweet_feature']).agg(
+        tweets=('source', 'size'),
+        retweeted=('retweets', np.count_nonzero),
+        retweets=('retweets', 'sum'),
+        # sources=('source', lambda x: list(x[pd.notna(x)])),
+    )
+    features.dropna(inplace=True)
+    features['freq'] = features['tweets'] / features['tweets'].sum()
+    return features
+
+
+class Simulation:
+    def __init__(self, graphfile, tweetfile):
+        self.A, node_labels = read.labelled_graph(graphfile)
+
+        self.tweets = read.tweets(tweetfile, node_labels)
+        self.features = tweets_to_features(self.tweets)
+        self.sources = self.tweets.dropna().groupby('author_feature')['source'].unique()
+
+    def sample_feature(self, size=None):
+        return np.random.choice(self.features.index, size, p=self.features['freq'])
+
+    def sample_source(self, author_feature, size=None):
+        return np.random.choice(self.sources[author_feature], size)
+
+    def search_parameters(self, samples, eps=0.1, feature=None):
+        if feature:
+            print(feature)
+            author, tweet = feature
+
+            t = self.tweets
+            sources = t[(t['author_feature'] == author) & (t['tweet_feature'] == tweet)]['source']
+            sources = sources.apply(lambda x: self.sample_source(author) if np.isnan(x) else x)
+
+            f = self.features.loc[feature]
+            edge_probability, discount = search_parameters(self.A, sources, f['retweeted'], f['retweets'],
+                                                           samples=samples, eps=eps)
+            self.features.loc[feature, 'edge_probability'] = edge_probability
+            self.features.loc[feature, 'discount'] = discount
+        else:
+            for feature in self.features.index:
+                self.search_parameters(samples=samples, eps=eps, feature=feature)
+
+    def simulate(self, features, nsources=1, samples=1, depth=1):
+        for feature in features:
+            author, tweet = feature
+            f = self.features.loc[feature]
+
+            sources = self.sample_source(author, size=nsources)
+            retweets, retweeted = replay(self.A, sources, samples=samples,
+                                         p=f['edge_probability'],
+                                         discount=f['discount'],
+                                         depth=depth)
+            yield retweets / nsources, retweeted / nsources
+
+
 if __name__ == "__main__":
-    pool = ray.util.multiprocessing.Pool(processes=32)
-    for i in range(1, 2):
-        # graph = read.metis(f'1K/graphs/{i}.metis')
-        # graph = read.followers_v("/Users/ian/Nextcloud/followers_v.txt")
-        graphdir = '/home/sarming'
-        graph = read.adjlist(f'{graphdir}/anonymized_inner_graph_neos_20200311.adjlist')
-        authors, retweeted = read.feature_authors(f'{graphdir}/features_00101010_authors_neos.txt')
-        print(f"retweeted: {retweeted}")
-        print(f"goal: {retweeted / len(authors)}")
+    datadir = '/Users/ian/Nextcloud'
+    # datadir = '/home/sarming'
+    # read.adjlist(f'{datadir}/anonymized_outer_graph_neos_20200311.adjlist',
+    #              save_as=f'{datadir}/outer_neos.npz')
+    sim = Simulation(f'{datadir}/outer_neos.npz', f'{datadir}/authors_tweets_features_neos.csv')
+    sim.search_parameters(1, 0.5)
+    # pool = ray.util.multiprocessing.Pool(processes=32)
+    # graph = read.metis(f'1K/graphs/{i}.metis')
+    # graph = read.followers_v("/Users/ian/Nextcloud/followers_v.txt")
+    # graph = read.adjlist(f'{graphdir}/anonymized_outer_graph_neos_20200311.adjlist')
+    # authors, retweeted = read.feature_authors(f'{graphdir}/features_00101010_authors_neos.txt')
+    # print(f"retweeted: {retweeted}")
+    # print(f"goal: {retweeted / len(authors)}")
 
-        A = graphs.uniform_adjacency(graph, 1.)
-        sources = [node_to_index(graph, a) for a in authors if graph.has_node(a)]
+    # A = graphs.uniform_adjacency(graph, 1.)
+    # sources = [node_to_index(graph, a) for a in authors if graph.has_node(a)]
+    # sp.sparse.save_npz(f'{graphdir}/anonymized_outer_graph_neos_20200311.npz',A)
+    # np.save(f'{graphdir}/features_00101010_authors_neos.npy', sources)
+    # A = sp.sparse.load_npz(f'{graphdir}/anonymized_outer_graph_neos_20200311.npz')
+    # sources = np.load(f'{graphdir}/features_00101010_authors_neos.npy')
 
-        edge_probability, discount = search_parameters(A, sources, retweeted, 911)
+    # edge_probability, discount = search_parameters(A, sources, retweeted, 911)
 
-        # for i in range(10):
-        #     tree = edge_propagate(A, 2, p=edge_probability, discount=0.8, depth=100)
-        #     print(tree.number_of_nodes())
-        #     print(nx.nx_pydot.to_pydot(tree))
-        #     nx.draw(tree)
-        #     plt.show()
+    # for i in range(10):
+    #     tree = edge_propagate(A, 2, p=edge_probability, discount=0.8, depth=100)
+    #     print(tree.number_of_nodes())
+    #     print(nx.nx_pydot.to_pydot(tree))
+    #     nx.draw(tree)
+    #     plt.show()
 
-        # discount = 0.6631584167480469
-        # discount = 0.6615333557128906
-        retweets, retweeted = replay(A, sources, samples=1000, p=edge_probability, discount=discount, depth=10)
-        print(f"retweets: {retweets}")
-        print(f"retweeted: {retweeted}")
-        # print(graph.number_of_nodes())
-        # A = graphs.uniform_adjacency(graph, edge_probability)
-        # start_node = random.randrange(0, A.shape[0])
-        # print(sum_retweets / 1000)
-        # A = nx.to_scipy_sparse_matrix(graph)
-        # tree = node_propagate(A, 0, 0.1, 10)
+    # discount = 0.6631584167480469
+    # discount = 0.6615333557128906
+    # retweets, retweeted = replay(A, sources, samples=1000, p=edge_probability, discount=discount, depth=10)
+    # print(f"retweets: {retweets}")
+    # print(f"retweeted: {retweeted}")
+    # print(graph.number_of_nodes())
+    # A = graphs.uniform_adjacency(graph, edge_probability)
+    # start_node = random.randrange(0, A.shape[0])
+    # print(sum_retweets / 1000)
+    # A = nx.to_scipy_sparse_matrix(graph)
+    # tree = node_propagate(A, 0, 0.1, 10)

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" autoUpload="Always">
+    <serverData>
+      <paths name="lotte">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/mach2-home/kpm-deploy" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="sarming@big-iron9:22 agent">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/sarming/tmp/pycharm_project_498" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+    </serverData>
+    <option name="myAutoUpload" value="ALWAYS" />
+  </component>
+</project>
