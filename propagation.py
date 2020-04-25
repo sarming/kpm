@@ -1,20 +1,8 @@
-import random, multiprocessing
-import ray.util.multiprocessing
 import numpy as np
 import scipy as sp
-import networkx as nx
 import pandas as pd
 from profilehooks import profile, timecall
-import graphs, read
-import matplotlib.pyplot as plt
-
-
-def edge_sample_weighted(A, node, p):
-    children = []
-    for i in range(A.indptr[node], A.indptr[node + 1]):
-        if random.random() <= A.data[i] * p:
-            children.append(A.indices[i])
-    return children
+import read
 
 
 def edge_sample(A, node, p):
@@ -25,26 +13,6 @@ def edge_sample(A, node, p):
 
     children = A.indices[l:r]
     return np.random.choice(children, num, replace=False)
-
-
-def edge_propagate_tree(A, start, p=1., discount=1., depth=1):
-    tree = nx.Graph()
-    tree.add_node(start)
-    leaves = [start]
-    for i in range(depth):
-        new_leaves = []
-        for node in leaves:
-            # print(A.indptr[node + 1] - A.indptr[node])
-            children = edge_sample(A, node, p * discount ** i)
-            children = list(filter(lambda x: not tree.has_node(x), children))
-            nx.add_star(tree, [node] + children)
-            new_leaves.extend(children)
-        leaves = new_leaves
-    # print(tree.number_of_nodes())
-    # print(nx.nx_pydot.to_pydot(tree))
-    # nx.draw(tree)
-    # plt.show()
-    return tree
 
 
 def edge_propagate(A, start, p=1., discount=1., depth=1):
@@ -60,31 +28,6 @@ def edge_propagate(A, start, p=1., discount=1., depth=1):
             visited |= children
         leaves = next_leaves
     return len(visited) - 1
-
-
-def children(A, node):
-    return A.indices[A.indptr[node]:A.indptr[node + 1]]
-
-
-def node_propagate(A, start, prob, depth=1):
-    # if prob is scalar treat as uniform probability (except for start node)
-    if isinstance(prob, float):
-        prob = [1 if n == start else prob for n in range(A.shape[0])]
-
-    tree = nx.Graph()
-    tree.add_node(start)
-    leaves = [start]
-    for i in range(depth):
-        new_leaves = []
-        for node in leaves:
-            if random.random() <= prob[node]:
-                children = children(A, node)
-                children = list(filter(lambda x: not tree.has_node(x), children))
-                new_leaves.extend(children)
-                nx.add_star(tree, [node] + children)
-        leaves = new_leaves
-    return tree
-
 
 def calculate_retweet_probability(A, sources, p):
     return sum(1 - (1 - p) ** float(A.indptr[a + 1] - A.indptr[a]) for a in sources) / len(sources)

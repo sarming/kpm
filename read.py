@@ -19,20 +19,6 @@ def metis(file):
     return graph
 
 
-def followers_v(file):
-    graph = nx.DiGraph()
-    with open(file) as f:
-        for line in f.readlines():
-            (node, neighbors) = line.split(':')
-            node = int(node.split()[0])
-            for v in neighbors.split():
-                # print(node, v)
-                graph.add_edge(node, int(v))
-        print(graph.number_of_nodes(), graph.number_of_edges())
-        # print(m)
-    return graph
-
-
 def adjlist(file, save_as=None):
     graph = nx.read_adjlist(file, nodetype=int, create_using=nx.DiGraph)
     if save_as:
@@ -67,19 +53,6 @@ def tweets(file, node_labels):
     csv['source'] = pd.Series((reverse.get(author, None) for author in csv['author']), dtype='Int64')
 
     return csv[['source', 'author_feature', 'tweet_feature', 'retweets']]
-
-
-def feature_authors(file):
-    authors = []
-    sum_retweets = 0
-
-    with open(file) as f:
-        for line in f.readlines():
-            author, tweets, retweeted = map(int, line.split())
-            authors += [author] * tweets
-            sum_retweets += retweeted
-        print(f"#tweets: {len(authors)}")
-    return authors, sum_retweets
 
 
 def eigvals(file):
