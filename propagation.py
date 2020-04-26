@@ -123,16 +123,16 @@ class Simulation:
     def __init__(self, graphfile, tweetfile):
         self.A, node_labels = read.labelled_graph(graphfile)
         tweets = read.tweets(tweetfile, node_labels)
-
         self.stats = tweets.groupby(['author_feature', 'tweet_feature']).agg(
             tweets=('source', 'size'),
             retweeted=('retweets', np.count_nonzero),
             retweets=('retweets', 'sum'),
             sources=('source', list),
-        ).dropna()
+        ).astype({'tweets': 'Int64'}).dropna()
         self.params = pd.DataFrame({'freq': self.stats.tweets / self.stats.tweets.sum(),
                                     'edge_probability': np.NaN,
-                                    'discount': np.NaN})
+                                    'discount_factor': 1.0,
+                                    })
         self.sources = tweets.dropna().groupby('author_feature')['source'].unique()
         self.features = self.stats.index
 
@@ -145,9 +145,10 @@ class Simulation:
         return np.random.choice(self.sources[author_feature], size)
 
     def sources_for_tweets(self, feature):
-        """Return sources for each tweet with given feature (random source if unknown)."""
-        sources = self.stats.loc[feature, 'sources']
+        # """Return sources for each tweet with given feature (random source if unknown)."""
         author_feature = feature[0]
+        return self.sample_source(author_feature, self.stats.loc[feature, 'tweets'])  # sample uniformly
+        sources = self.stats.loc[feature, 'sources']
         return [self.sample_source(author_feature) if pd.isna(x) else x for x in sources]
 
     def search_parameters(self, samples, eps=0.1, feature=None):
@@ -159,38 +160,53 @@ class Simulation:
             sources = self.sources_for_tweets(feature)
             assert len(sources) == st.tweets
 
-            edge_probability, discount = search_parameters(self.A, sources,
-                                                           st.retweeted,
-                                                           st.retweets,
-                                                           samples=samples, eps=eps)
-            self.params.loc[feature, 'edge_probability'] = edge_probability
-            self.params.loc[feature, 'discount'] = discount
+            p, discount = search_parameters(self.A, sources,
+                                            st.retweeted,
+                                            st.retweets,
+                                            samples=samples, eps=eps)
+            self.params.loc[feature, 'edge_probability'] = p
+            self.params.loc[feature, 'discount_factor'] = discount
         else:
             for feature in self.features:
                 self.search_parameters(samples=samples, eps=eps, feature=feature)
             # self.params['edge_probability'] = [x for x in self.search_edge_probability(eps=eps)]
-            # self.params['discount'] = [x for x in self.search_discount_factor(samples=samples, eps=eps)]
+            # self.params['discount_factor'] = [x for x in self.search_discount_factor(samples=samples, eps=eps)]
 
-    def search_edge_probability(self, eps=0.1, feature=None):
+    def search_edge_probability(self, nsources=None, eps=0.00001, feature=None):
         """Find edge probability for given feature vector (or all if none given)."""
         if feature:
-            sources = self.sources_for_tweets(feature)
-            return bin_search(0, 1, self.stats.loc[feature, 'retweeted'],
+            if nsources:  # Sample sources
+                sources = self.sample_source(feature[0], nsources)
+            else:  # Use sources from tweet dataset
+                sources = self.sources_for_tweets(feature)
+
+            st = self.stats.loc[feature]
+            goal = st.retweeted * (len(sources) / st.tweets)
+
+            return bin_search(0, 1, goal,
                               lambda p: calculate_retweet_probability(self.A, sources, p), eps=eps)
         else:
-            return (self.search_edge_probability(eps=eps, feature=f) for f in self.features)
+            return (self.search_edge_probability(nsources=nsources, eps=eps, feature=f) for f in self.features)
 
-    def search_discount_factor(self, samples, eps=0.1, feature=None):
+    def search_discount_factor(self, nsources=None, samples=1, eps=0.1, feature=None):
         """Find discount factor for given feature vector (or all if none given)."""
         if feature:
-            sources = self.sources_for_tweets(feature)
-            return bin_search(0, 1, self.stats.loc[feature, 'retweets'],
+            if nsources:  # Sample sources
+                sources = self.sample_source(feature[0], nsources)
+            else:  # Use sources from tweet dataset
+                sources = self.sources_for_tweets(feature)
+
+            st = self.stats.loc[feature]
+            goal = st.retweets * (len(sources) / st.tweets)
+
+            return bin_search(0, 1, goal,
                               lambda d: simulate(self.A, sources, samples=samples,
                                                  p=self.params.loc[feature, 'edge_probability'],
                                                  discount=d, depth=10)[0],
                               eps=eps)
         else:
-            return (self.search_discount_factor(samples=samples, eps=eps, feature=f) for f in self.features)
+            return (self.search_discount_factor(nsources=nsources, samples=samples, eps=eps, feature=f) for f in
+                    self.features)
 
     def simulate(self, features, nsources=1, samples=1, depth=1):
         """Simulate messages with given feature vectors."""
@@ -215,6 +231,7 @@ if __name__ == "__main__":
     # read.adjlist(f'{datadir}/anonymized_outer_graph_neos_20200311.adjlist',
     #              save_as=f'{datadir}/outer_neos.npz')
     sim = Simulation(f'{datadir}/outer_neos.npz', f'{datadir}/authors_tweets_features_neos.csv')
-    sim.search_parameters(1, 0.5)
+    print(list(sim.search_edge_probability()))
+    # sim.search_parameters(1, 0.5)
     # sim.search_parameters(10, 0.1, feature=('0010', '1010'))
     # print(sim.features.loc[('0010', '1010')])
