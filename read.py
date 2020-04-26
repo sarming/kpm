@@ -41,6 +41,7 @@ def labelled_graph(filename):
 
 def tweets(file, node_labels):
     def str_cat_series(*series):
+        # return list(map(str,zip(*series))) # to support nonbinary features
         series = list(map(lambda x: x.apply(str), series))
         return series[0].str.cat(series[1:]).astype("category")
 
