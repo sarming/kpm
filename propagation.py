@@ -6,7 +6,7 @@ from profilehooks import profile, timecall
 import read
 
 
-def edge_propagate(A, start, p=1., discount=1., depth=1):
+def edge_propagate(A, start, p, discount=1., depth=1):
     """Propagate message in graph A and return number of nodes visited.
 
     Args:
@@ -27,7 +27,7 @@ def edge_propagate(A, start, p=1., discount=1., depth=1):
         next_leaves = set()
         for node in leaves:
             children = set(edge_sample(A, node, p * discount ** i))
-            children = children - visited
+            children -= visited
             next_leaves |= children
             visited |= children
         leaves = next_leaves
@@ -68,20 +68,24 @@ def calculate_retweet_probability(A, sources, p):
 def bin_search(lb, ub, goal, fun, eps=0.00001):
     """Find fun^-1( goal ) by binary search.
 
+    Note:
+        For correctness fun has to be monotone up to eps, viz. fun(x) <= fun(x+eps) for all x
+        This is an issue with stochastic functions.
+
     Args:
         lb: Initial lower bound.
         ub: Initial upper bound.
         goal: Goal value.
-        fun: Function to invert.
+        fun: Monotone Function.
         eps: Precision at which to stop.
 
-    Returns: x s.t. | fun(x) - goal | <= eps
+    Returns: x s.t. there is y with |x-y|<=eps and fun(y)=goal
     """
     mid = (ub + lb) / 2
     if ub - lb < eps:
         return mid
     f = fun(mid)
-    # print(f'f({mid})={f}')
+    print(f"f({mid})={f}{'<' if f < goal else '>'}{goal} [{lb},{ub}]")
     if f < goal:
         return bin_search(mid, ub, goal, fun)
     else:
@@ -120,22 +124,31 @@ def search_parameters(A, sources, retweeted, retweets, samples=100, eps=0.00001)
 
 
 class Simulation:
-    def __init__(self, graphfile, tweetfile):
-        # self.A = self.stats = self.pararms = self.sources = self.features = None
-        self.A, node_labels = read.labelled_graph(graphfile)
-        tweets = read.tweets(tweetfile, node_labels)
+    def __init__(self, A, tweets):
+        self.A = A
         self.stats = tweets.groupby(['author_feature', 'tweet_feature']).agg(
             tweets=('source', 'size'),
             retweeted=('retweets', np.count_nonzero),
             retweets=('retweets', 'sum'),
             sources=('source', list),
         ).dropna().astype({'tweets': 'Int64', 'retweeted': 'Int64', 'retweets': 'Int64'})
+
+        self.stats = self.stats[self.stats.tweets > 10]  # Remove small classes
+
         self.params = pd.DataFrame({'freq': self.stats.tweets / self.stats.tweets.sum(),
-                                    'edge_probability': np.NaN,
+                                    'edge_probability': np.NaN,  # will be calculated below
                                     'discount_factor': 1.0,
                                     })
         self.sources = tweets.dropna().groupby('author_feature')['source'].unique()
         self.features = self.stats.index
+
+        self.params['edge_probability'] = self.edge_probability_from_retweeted()
+
+    @classmethod
+    def from_files(cls, graph_file, tweet_file):
+        A, node_labels = read.labelled_graph(graph_file)
+        tweets = read.tweets(tweet_file, node_labels)
+        return cls(A, tweets)
 
     def sample_feature(self, size=None):
         """Return a sample of feature vectors."""
@@ -145,35 +158,7 @@ class Simulation:
         """Sample uniformly from sources with author_feature."""
         return np.random.choice(self.sources[author_feature], size)
 
-    def sources_for_tweets(self, feature):
-        # """Return sources for each tweet with given feature (random source if unknown)."""
-        author_feature = feature[0]
-        return self.sample_source(author_feature, self.stats.loc[feature, 'tweets'])  # sample uniformly
-        sources = self.stats.loc[feature, 'sources']
-        return [self.sample_source(author_feature) if pd.isna(x) else x for x in sources]
-
-    def search_parameters(self, samples, eps=0.1, feature=None):
-        """Find edge probability and discount factor for given feature vector (or all if none given)."""
-        if feature:
-            # print(feature)
-            st = self.stats.loc[feature]
-
-            sources = self.sources_for_tweets(feature)
-            assert len(sources) == st.tweets
-
-            p, discount = search_parameters(self.A, sources,
-                                            st.retweeted,
-                                            st.retweets,
-                                            samples=samples, eps=eps)
-            self.params.loc[feature, 'edge_probability'] = p
-            self.params.loc[feature, 'discount_factor'] = discount
-        else:
-            for feature in self.features:
-                self.search_parameters(samples=samples, eps=eps, feature=feature)
-            # self.params['edge_probability'] = [x for x in self.search_edge_probability(eps=eps)]
-            # self.params['discount_factor'] = [x for x in self.search_discount_factor(samples=samples, eps=eps)]
-
-    def calculate_edge_probability(self, sources=None, eps=0.00001, feature=None):
+    def edge_probability_from_retweeted(self, sources=None, eps=0.00001, feature=None):
         """Find edge probability for given feature vector (or all if none given)."""
         if feature:
             if not sources:  # start once from each source with given feature
@@ -187,43 +172,57 @@ class Simulation:
                               lambda p: calculate_retweet_probability(self.A, sources, p), eps=eps)
         else:
             if not sources:
-                return [self.calculate_edge_probability(eps=eps, feature=f) for f in self.features]
-            return [self.calculate_edge_probability(sources=sources[feature[0]], eps=eps, feature=f)
+                return [self.edge_probability_from_retweeted(eps=eps, feature=f) for f in self.features]
+            return [self.edge_probability_from_retweeted(sources=sources[feature[0]], eps=eps, feature=f)
                     for f in self.features]
 
-    def search_discount_factor(self, nsources=None, samples=1, eps=0.1, feature=None):
+    def discount_factor_from_retweets(self, sources=None, samples=1000, eps=0.1, depth=10, feature=None):
         """Find discount factor for given feature vector (or all if none given)."""
         if feature:
-            if nsources:  # Sample sources
-                sources = self.sample_source(feature[0], nsources)
-            else:  # Use sources from tweet dataset
-                sources = self.sources_for_tweets(feature)
+            print(feature)
+            author_feature, _ = feature
+            if not sources:  # start once from each source with given feature
+                sources = self.sources[author_feature]
+            elif isinstance(sources, int):
+                sources = self.sample_source(author_feature, size=sources)
 
             st = self.stats.loc[feature]
             goal = st.retweets * (len(sources) / st.tweets)
-
+            p = self.params.loc[feature, 'edge_probability']
+            print(f'{samples} samples of {len(sources)} sources with p={p} and goal={goal}')
             return bin_search(0, 1, goal,
-                              lambda d: simulate(self.A, sources, samples=samples,
-                                                 p=self.params.loc[feature, 'edge_probability'],
-                                                 discount=d, depth=10)[0],
+                              lambda d: simulate(self.A, sources, samples=samples, p=p, discount=d, depth=depth)[0],
                               eps=eps)
         else:
-            return (self.search_discount_factor(nsources=nsources, samples=samples, eps=eps, feature=f) for f in
-                    self.features)
+            if not sources or isinstance(sources, int):
+                return [self.discount_factor_from_retweets(sources=sources, samples=samples, eps=eps, feature=f)
+                        for f in self.features]
+            return [self.discount_factor_from_retweets(sources=sources[feature[0]], samples=samples, eps=eps, feature=f)
+                    for f in self.features]
 
-    def simulate(self, features, nsources=1, samples=1, depth=1):
+    def simulate_single(self, feature, sources=1, samples=1, depth=10):
+        """Simulate messages with given feature vector."""
+        params = self.params.loc[feature]
+
+        if isinstance(sources, int):
+            author_feature, _ = feature
+            sources = self.sample_source(author_feature, size=sources)
+
+        retweets, retweeted = simulate(self.A, sources, samples=samples,
+                                       p=params.edge_probability,
+                                       discount=params.discount,
+                                       depth=depth)
+        yield retweets / len(sources), retweeted / len(sources)
+
+    def simulate(self, features, sources=1, samples=1, depth=10):
         """Simulate messages with given feature vectors."""
-        for feature in features:
-            params = self.params.loc[feature]
-
-            author_feature = feature[0]
-            sources = self.sample_source(author_feature, size=nsources)
-
-            retweets, retweeted = simulate(self.A, sources, samples=samples,
-                                           p=params.edge_probability,
-                                           discount=params.discount,
-                                           depth=depth)
-            yield retweets / nsources, retweeted / nsources
+        from collections.abc import Iterable
+        if isinstance(sources, Iterable):
+            for feature, sources in zip(features, sources):
+                yield from self.simulate_single(feature, sources=sources, samples=samples, depth=depth)
+        else:
+            for feature in features:
+                yield from self.simulate_single(feature, sources=sources, samples=samples, depth=depth)
 
 
 if __name__ == "__main__":
@@ -233,8 +232,8 @@ if __name__ == "__main__":
     # datadir = '/home/sarming'
     # read.adjlist(f'{datadir}/anonymized_outer_graph_neos_20200311.adjlist',
     #              save_as=f'{datadir}/outer_neos.npz')
-    sim = Simulation(f'{datadir}/outer_neos.npz', f'{datadir}/authors_tweets_features_neos.csv')
-    print(list(sim.calculate_edge_probability()))
-    # sim.search_parameters(1, 0.5)
-    # sim.search_parameters(10, 0.1, feature=('0010', '1010'))
+    sim = Simulation.from_files(f'{datadir}/outer_neos.npz', f'{datadir}/authors_tweets_features_neos.csv')
+    sim.discount_factor_from_retweets(samples=1000, eps=0.5, feature=('0010', '1010'))
+    # sim.search_parameters(samples=1, eps=0.5,  feature=('0000', '0101') )
+    # , feature=('0010', '1010'))
     # print(sim.features.loc[('0010', '1010')])
