@@ -65,7 +65,7 @@ def calculate_retweet_probability(A, sources, p):
 
 
 # @ray.remote
-def bin_search(lb, ub, goal, fun, eps=0.00001):
+def bin_search(lb, ub, goal, fun, eps):
     """Find fun^-1( goal ) by binary search.
 
     Note:
@@ -79,7 +79,7 @@ def bin_search(lb, ub, goal, fun, eps=0.00001):
         fun: Monotone Function.
         eps: Precision at which to stop.
 
-    Returns: x s.t. there is y with |x-y|<=eps and fun(y)=goal
+    Returns: x s.t. lb<x<ub and there is y with |x-y|<=eps and fun(y)=goal
     """
     mid = (ub + lb) / 2
     if ub - lb < eps:
@@ -87,9 +87,9 @@ def bin_search(lb, ub, goal, fun, eps=0.00001):
     f = fun(mid)
     print(f"f({mid})={f}{'<' if f < goal else '>'}{goal} [{lb},{ub}]")
     if f < goal:
-        return bin_search(mid, ub, goal, fun)
+        return bin_search(mid, ub, goal, fun, eps)
     else:
-        return bin_search(lb, mid, goal, fun)
+        return bin_search(lb, mid, goal, fun, eps)
 
 
 # @timecall
