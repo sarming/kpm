@@ -1,7 +1,7 @@
 import numpy as np
 import scipy as sp
 import pandas as pd
-import ray, itertools
+import multiprocessing
 from profilehooks import profile, timecall
 import read
 
@@ -86,21 +86,30 @@ def bin_search(lb, ub, goal, fun, eps):
     if ub - lb < eps:
         return mid
     f = fun(mid)
-    # print(f"f({mid})={f}{'<' if f < goal else '>'}{goal} [{lb},{ub}]")
+    print(f"f({mid})={f}{'<' if f < goal else '>'}{goal} [{lb},{ub}]")
     if f < goal:
         return bin_search(mid, ub, goal, fun, eps)
     else:
         return bin_search(lb, mid, goal, fun, eps)
 
 
+def make_global(A):
+    global global_A
+    global_A = A
+
+
+def pool_simulate(source, p, discount, depth, samples):
+    return [edge_propagate(global_A, source, p=p, discount=discount, depth=depth) for _ in range(samples)]
+
+
 # @timecall
 def simulate(A, sources, p, discount=1., depth=1, samples=1):
     """Simulate tweets starting from sources, return mean retweets and retweeted."""
-    # sample_calls = [(A, source, samples, p, discount, depth) for source in sources]
-    # retweets = pool.starmap(simulate, sample_calls)
-    retweets = ((edge_propagate(A, source, p=p, discount=discount, depth=depth)
-                 for _ in range(samples))
-                for source in sources)
+    sample_calls = [(source, p, discount, depth, samples) for source in sources]
+    retweets = pool.starmap(pool_simulate, sample_calls)
+    # retweets = ((edge_propagate(A, source, p=p, discount=discount, depth=depth)
+    #              for _ in range(samples))
+    #             for source in sources)
     retweets = [t for ts in retweets for t in ts if t != 0]  # Flatten and remove zeros
     sum_retweets = sum(retweets)
     sum_retweeted = len(retweets)
@@ -117,7 +126,7 @@ def edge_probability_from_retweet_probability(retweet_probability, A, sources, e
 def discount_factor_from_mean_retweets(mean_retweets, A, sources, p, depth=10, samples=1000, eps=0.1):
     """Find discount factor."""
     goal = mean_retweets * len(sources)
-    # print(f'discount: {samples} samples of {len(sources)} sources with p={p} and goal={goal}')
+    print(f'discount: {samples} samples of {len(sources)} sources with p={p} and goal={goal}')
     return bin_search(0, 1, goal,
                       lambda d: simulate(A, sources, p=p, discount=d, depth=depth, samples=samples)[0],
                       eps=eps)
@@ -159,14 +168,6 @@ class Simulation:
         tweets = read.tweets(tweet_file, node_labels)
         return cls(A, tweets)
 
-    @classmethod
-    def pool_from_files(cls, graph_file, tweet_file, size=4):
-        from ray.util import ActorPool
-        a, node_labels = read.labelled_graph(graph_file)
-        tweets = read.tweets(tweet_file, node_labels)
-        remote_cls = ray.remote(cls)
-        return ActorPool(remote_cls.remote(a, tweets) for _ in range(size))
-
     def sample_feature(self, size=None):
         """Return a sample of feature vectors."""
         return np.random.choice(self.features, size, p=self.params.freq)
@@ -198,6 +199,7 @@ class Simulation:
                                                                     self._default_sources(sources, f)
                                                                     ) for f in features), index=features)
 
+    @timecall
     def discount_factor_from_mean_retweets(self, sources=None, depth=10, samples=1000, eps=0.1, features=None):
         """Find discount factor for given feature vector (or all if none given)."""
         if features is None:
@@ -234,7 +236,7 @@ class Simulation:
 
 if __name__ == "__main__":
     # pool = ray.util.multiprocessing.Pool(processes=32)
-    ray.init()
+    # ray.init()
     datadir = '/Users/ian/Nextcloud'
     # datadir = '/home/sarming'
     # read.adjlist(f'{datadir}/anonymized_outer_graph_neos_20200311.adjlist',
@@ -244,14 +246,15 @@ if __name__ == "__main__":
     # stats = Simulation.tweet_statistics(tweets)
     # features = stats.index
     sim = Simulation.from_files(f'{datadir}/outer_neos.npz', f'{datadir}/authors_tweets_features_neos.csv')
-    pool = Simulation.pool_from_files(f'{datadir}/outer_neos.npz', f'{datadir}/authors_tweets_features_neos.csv')
-    print(
-        list(pool.map(lambda a, f: a.discount_factor_from_mean_retweets.remote(samples=1000, eps=0.1, features=[f]),
-                      sim.features)))
+    # pool = Simulation.pool_from_files(f'{datadir}/outer_neos.npz', f'{datadir}/authors_tweets_features_neos.csv')
+    # print(
+    #     list(pool.map(lambda a, f: a.discount_factor_from_mean_retweets.remote(samples=1000, eps=0.1, features=[f]),
+    #                   sim.features)))
     # print(sim.edge_probability_from_retweet_probability(sources=sim.sources))
     # print(sim.params.edge_probability)
     # ray.get(sim.discount_factor_from_mean_retweets(samples=1000, eps=0.1))
-    # sim.discount_factor_from_mean_retweets(samples=1000, eps=0.1, feature=('0010', '1010'))
+    pool = multiprocessing.Pool(initializer=make_global, initargs=(sim.A,))
+    sim.discount_factor_from_mean_retweets(samples=1000, eps=0.1, features=[('0010', '0010')])
     # sim.search_parameters(samples=1, eps=0.5,  feature=('0000', '0101') )
     # , feature=('0010', '1010'))
     # print(sim.features.loc[('0010', '1010')])
