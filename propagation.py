@@ -6,7 +6,7 @@ from profilehooks import profile, timecall
 import read
 
 
-def edge_propagate(A, start, p, discount=1., depth=1):
+def edge_propagate(A, start, p, discount=1., depth=1, max_nodes=1000):
     """Propagate message in graph A and return number of nodes visited.
 
     Args:
@@ -15,6 +15,7 @@ def edge_propagate(A, start, p, discount=1., depth=1):
         p (float): Probability that message passes along an edge.
         discount (float): Discount factor <=1.0 that is multiplied at each level.
         depth (int): Maximum depth.
+        max_nodes (int): Maximum number of nodes.
 
     Returns:
         Number of nodes visited (without initial).
@@ -30,6 +31,8 @@ def edge_propagate(A, start, p, discount=1., depth=1):
             children -= visited
             next_leaves |= children
             visited |= children
+            if len(visited) > max_nodes:
+                return max_nodes
         leaves = next_leaves
     return len(visited) - 1
 
@@ -59,11 +62,9 @@ def calculate_retweet_probability(A, sources, p):
         sources: List of source nodes, one per tweet.
         p: Edge probability.
 
-    Returns: \sum_{x \in sources} 1 - (1-p)^{ deg-(x) }
+    Returns: mean_{x in sources}( 1 - (1-p)^{deg-(x)} )
     """
-    return sum(1 - (1 - p) ** float(A.indptr[x + 1] - A.indptr[x]) for x in sources)
-    # return sum(1 - (1 - p) ** float(A.getrow(x).getnnz()) for x in sources)
-    # return sum(1 - (1 - p) ** float(graph.out_degree(a)) for a in authors if graph.has_node(a))
+    return sum(1 - (1 - p) ** float(A.indptr[x + 1] - A.indptr[x]) for x in sources) / len(sources)
 
 
 def invert_monotone(lb, ub, goal, fun, eps):
@@ -116,35 +117,35 @@ def make_global(A):
     global_A = A
 
 
-def pool_simulate(source, p, discount, depth, samples):
-    return [edge_propagate(global_A, source, p=p, discount=discount, depth=depth) for _ in range(samples)]
+def pool_simulate(source, p, discount, depth, max_nodes, samples):
+    return [edge_propagate(global_A, source, p=p, discount=discount, depth=depth, max_nodes=max_nodes) for _ in
+            range(samples)]
 
 
 # @timecall
-def simulate(A, sources, p, discount=1., depth=1, samples=1):
-    """Simulate tweets starting from sources, return mean retweets and retweeted."""
-    sample_calls = [(source, p, discount, depth, samples) for source in sources]
+def simulate(A, sources, p, discount=1., depth=1, max_nodes=1000, samples=1, return_stats=True):
+    """Simulate tweets starting from sources, return mean retweets and retweet probability."""
+    sample_calls = [(source, p, discount, depth, max_nodes, samples) for source in sources]
     retweets = pool.starmap(pool_simulate, sample_calls)
-    # retweets = ((edge_propagate(A, source, p=p, discount=discount, depth=depth)
+    # retweets = ((edge_propagate(A, source, p=p, discount=discount, depth=depth, max_nodes=max_nodes)
     #              for _ in range(samples))
     #             for source in sources)
-    retweets = [t for ts in retweets for t in ts if t != 0]  # Flatten and remove zeros
-    sum_retweets = sum(retweets)
-    sum_retweeted = len(retweets)
-    return sum_retweets / samples, sum_retweeted / samples
+    if return_stats:
+        retweets = [t for ts in retweets for t in ts if t != 0]  # Flatten and remove zeros
+        samples = samples * len(sources)
+        return sum(retweets) / samples, len(retweets) / samples
+    return retweets
 
 
 def edge_probability_from_retweet_probability(retweet_probability, A, sources, eps=1e-5):
     """Find edge probability."""
-    goal = retweet_probability * len(sources)
-    return invert_monotone(0, 1, goal, lambda p: calculate_retweet_probability(A, sources, p), eps)
+    return invert_monotone(0, 1, retweet_probability, lambda p: calculate_retweet_probability(A, sources, p), eps)
 
 
 def discount_factor_from_mean_retweets(mean_retweets, A, sources, p, depth=10, samples=1000, eps=1e-2):
     """Find discount factor."""
-    goal = mean_retweets * len(sources)
-    print(f'discount: {samples} samples of {len(sources)} sources with p={p} and goal={goal}')
-    return invert_monotone(0, 1, goal,
+    print(f'discount: {samples} samples of {len(sources)} sources with p={p} and goal={mean_retweets}')
+    return invert_monotone(0, 1, mean_retweets,
                            lambda d: simulate(A, sources, p=p, discount=d, depth=depth, samples=samples)[0],
                            eps)
 
@@ -160,6 +161,8 @@ class Simulation:
         self.params = pd.DataFrame({'freq': self.stats.tweets / self.stats.tweets.sum(),
                                     'edge_probability': np.NaN,  # will be calculated below
                                     'discount_factor': 1.0,
+                                    'max_retweets': 10 * self.stats.max_retweets,
+                                    'depth': 10,
                                     })
         self.sources = tweets.dropna().groupby('author_feature')['source'].unique()
         self.features = self.stats.index
@@ -207,6 +210,7 @@ class Simulation:
         except TypeError:
             return sources
 
+    @timecall
     def edge_probability_from_retweet_probability(self, sources=None, features=None):
         """Find edge probability for given feature vector (or all if none given)."""
         if features is None:
