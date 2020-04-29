@@ -66,7 +66,7 @@ def calculate_retweet_probability(A, sources, p):
     # return sum(1 - (1 - p) ** float(graph.out_degree(a)) for a in authors if graph.has_node(a))
 
 
-def bin_search(lb, ub, goal, fun, eps):
+def invert_monotone(lb, ub, goal, fun, eps):
     """Find fun^-1( goal ) by binary search.
 
     Note:
@@ -88,9 +88,27 @@ def bin_search(lb, ub, goal, fun, eps):
     f = fun(mid)
     print(f"f({mid})={f}{'<' if f < goal else '>'}{goal} [{lb},{ub}]")
     if f < goal:
-        return bin_search(mid, ub, goal, fun, eps)
+        return invert_monotone(mid, ub, goal, fun, eps)
     else:
-        return bin_search(lb, mid, goal, fun, eps)
+        return invert_monotone(lb, mid, goal, fun, eps)
+
+
+def linear_search(lb, ub, goal, fun, eps):
+    f_lb = fun(lb)
+    f_ub = fun(ub)
+    while ub - lb > eps:
+        if goal <= f_lb: return lb
+        if goal >= f_ub: return ub
+        mid = (ub - lb) / (f_ub - f_lb) * (goal - f_lb) + lb
+        f_mid = fun(mid)
+        print(f"f({lb},{mid},{ub})={f_lb},{f_mid},{f_ub}{'<' if f_mid < goal else '>'}{goal}")
+        if f_mid < goal:
+            if mid - lb < eps: return mid
+            lb, f_lb = mid, f_mid
+        else:
+            if ub - mid < eps: return mid
+            ub, f_ub = mid, f_mid
+    return mid
 
 
 def make_global(A):
@@ -116,20 +134,19 @@ def simulate(A, sources, p, discount=1., depth=1, samples=1):
     return sum_retweets / samples, sum_retweeted / samples
 
 
-def edge_probability_from_retweet_probability(retweet_probability, A, sources, eps=0.00001):
+def edge_probability_from_retweet_probability(retweet_probability, A, sources, eps=1e-5):
     """Find edge probability."""
     goal = retweet_probability * len(sources)
-    return bin_search(0, 1, goal,
-                      lambda p: calculate_retweet_probability(A, sources, p), eps=eps)
+    return invert_monotone(0, 1, goal, lambda p: calculate_retweet_probability(A, sources, p), eps)
 
 
-def discount_factor_from_mean_retweets(mean_retweets, A, sources, p, depth=10, samples=1000, eps=0.1):
+def discount_factor_from_mean_retweets(mean_retweets, A, sources, p, depth=10, samples=1000, eps=1e-2):
     """Find discount factor."""
     goal = mean_retweets * len(sources)
     print(f'discount: {samples} samples of {len(sources)} sources with p={p} and goal={goal}')
-    return bin_search(0, 1, goal,
-                      lambda d: simulate(A, sources, p=p, discount=d, depth=depth, samples=samples)[0],
-                      eps=eps)
+    return invert_monotone(0, 1, goal,
+                           lambda d: simulate(A, sources, p=p, discount=d, depth=depth, samples=samples)[0],
+                           eps)
 
 
 # def fillna_random(list, fill_values):
