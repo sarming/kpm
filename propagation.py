@@ -220,28 +220,50 @@ class Simulation:
         """Sample uniformly from sources with author_feature."""
         return np.random.choice(self.sources[author_feature], size)
 
-    def _default_sources(self, sources, feature):
+    def _default_sources(self, sources, feature, maybe_per_feature=False):
+        if feature is None:
+            return sources
         author_feature, _ = feature
-        if not sources:  # start once from each source with given author_feature
+        if sources is None:  # start once from each source with given author_feature
             return self.sources[author_feature]
         elif isinstance(sources, int):
             return self.sample_source(author_feature, size=sources)
-        try:
+        elif maybe_per_feature:
             try:
-                return sources[feature]
-            except KeyError:
-                return sources[author_feature]
-        except TypeError:
-            return sources
+                try:
+                    return sources[feature]
+                except KeyError:
+                    return sources[author_feature]
+            except TypeError:
+                pass
+        return sources
 
-    @timecall
+    def _default_params(self, params, feature, maybe_per_feature=False):
+        if feature is None:
+            default_params = pd.Series({'edge_probability': pd.NA,
+                                        'discount_factor': 1.,
+                                        'max_retweets': 1000,
+                                        'depth': 10,
+                                        })
+        else:
+            default_params = self.params.loc[feature]
+            if maybe_per_feature:
+                try:
+                    params = params[feature]
+                except KeyError:
+                    pass
+
+        if not isinstance(params, pd.Series):
+            params = pd.Series(params, index=default_params.index, dtype=object)
+        return params.fillna(default_params)
+
     def edge_probability_from_retweet_probability(self, sources=None, features=None):
         """Find edge probability for given feature vector (or all if none given)."""
         if features is None:
             features = self.features
         return pd.Series((edge_probability_from_retweet_probability(self.stats.loc[f, 'retweet_probability'],
                                                                     self.A,
-                                                                    self._default_sources(sources, f)
+                                                                    self._default_sources(sources, f, True)
                                                                     ) for f in features), index=features)
 
     @timecall
@@ -251,32 +273,25 @@ class Simulation:
             features = self.features
         return pd.Series((discount_factor_from_mean_retweets(self.stats.loc[f, 'mean_retweets'],
                                                              self.A,
-                                                             self._default_sources(sources, f),
+                                                             self._default_sources(sources, f, True),
                                                              self.params.loc[f, 'edge_probability'],
                                                              depth,
                                                              samples,
                                                              eps) for f in features), index=features)
 
-    def simulate_single(self, feature, sources=1, samples=1, depth=10):
+    def simulate(self, feature=None, sources=None, params=None, samples=1, return_stats=True):
         """Simulate messages with given feature vector."""
-        params = self.params.loc[feature]
-        if isinstance(sources, int):
-            author_feature, _ = feature
-            sources = self.sample_source(author_feature, size=sources)
+        if feature:
+            sources = self._default_sources(sources, feature)
+        params = self._default_params(params, feature)
 
-        retweets, retweeted = simulate(self.A, sources, p=params.edge_probability, discount=params.discount,
-                                       depth=depth, samples=samples)
-        yield retweets / len(sources), retweeted / len(sources)
-
-    def simulate(self, features, sources=1, samples=1, depth=10):
-        """Simulate messages with given feature vectors."""
-        from collections.abc import Iterable
-        if isinstance(sources, Iterable):
-            for feature, sources in zip(features, sources):
-                yield from self.simulate_single(feature, sources=sources, samples=samples, depth=depth)
-        else:
-            for feature in features:
-                yield from self.simulate_single(feature, sources=sources, samples=samples, depth=depth)
+        return simulate(self.A, sources,
+                        p=params.edge_probability,
+                        discount=params.discount_factor,
+                        depth=params.depth,
+                        max_nodes=params.max_nodes,
+                        samples=samples,
+                        return_stats=return_stats)
 
 
 if __name__ == "__main__":
