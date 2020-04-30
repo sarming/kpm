@@ -1,9 +1,8 @@
-import itertools
 import numpy as np
-import scipy as sp
 import pandas as pd
-import ray
-from profilehooks import profile, timecall
+from profilehooks import timecall
+
+import parallel
 import read
 
 
@@ -42,7 +41,7 @@ def edge_sample(A, node, p):
     """Return Bernoulli sample of node's children using probability p.
 
     Note:
-         This is the inner loop.
+         This is the inner loop, rewrite in Cython might be worthwhile.
     """
     l, r = A.indptr[node], A.indptr[node + 1]
     # return A.indices[l:r][np.random.rand(r - l) < p]
@@ -63,12 +62,12 @@ def calculate_retweet_probability(A, sources, p):
         sources: List of source nodes, one per tweet.
         p: Edge probability.
 
-    Returns: mean_{x in sources}( 1 - (1-p)^{deg-(x)} )
+    Returns: mean_{x in sources} 1-(1-p)^{deg-(x)}
     """
     return sum(1 - (1 - p) ** float(A.indptr[x + 1] - A.indptr[x]) for x in sources) / len(sources)
 
 
-def invert_monotone(lb, ub, goal, fun, eps):
+def invert_monotone(fun, goal, lb, ub, eps):
     """Find fun^-1( goal ) by binary search.
 
     Note:
@@ -76,10 +75,10 @@ def invert_monotone(lb, ub, goal, fun, eps):
         This is an issue with stochastic functions.
 
     Args:
+        fun: Monotone Function.
+        goal: Goal value.
         lb: Initial lower bound.
         ub: Initial upper bound.
-        goal: Goal value.
-        fun: Monotone Function.
         eps: Precision at which to stop.
 
     Returns: x s.t. lb<x<ub and there is y with |x-y|<=eps and fun(y)=goal
@@ -90,12 +89,12 @@ def invert_monotone(lb, ub, goal, fun, eps):
     f = fun(mid)
     print(f"f({mid})={f}{'<' if f < goal else '>'}{goal} [{lb},{ub}]")
     if f < goal:
-        return invert_monotone(mid, ub, goal, fun, eps)
+        return invert_monotone(fun, goal, mid, ub, eps)
     else:
-        return invert_monotone(lb, mid, goal, fun, eps)
+        return invert_monotone(fun, goal, lb, mid, eps)
 
 
-def linear_search(lb, ub, goal, fun, eps):
+def linear_search(fun, goal, lb, ub, eps):
     f_lb = fun(lb)
     f_ub = fun(ub)
     while ub - lb > eps:
@@ -113,69 +112,27 @@ def linear_search(lb, ub, goal, fun, eps):
     return mid
 
 
-def make_global(A):
-    global global_A
-    global_A = A
-
-
-def pool_simulate(source, p, discount, depth, max_nodes, samples):
-    return [edge_propagate(global_A, source, p=p, discount=discount, depth=depth, max_nodes=max_nodes) for _ in
-            range(samples)]
-
-
-@ray.remote
-def ray_simulate(A, sources, p, discount, depth, max_nodes, samples):
-    # A = ray.get(A)
-    return [[edge_propagate(A, source, p=p, discount=discount, depth=depth, max_nodes=max_nodes) for _ in
-             range(samples)] for source in sources]
-
-
-def chunks(lst, n):
-    """Split lst into about n chunks of equal size."""
-    s, r = divmod(len(lst), n)
-    if r:
-        s += 1
-    for i in range(0, len(lst), s):
-        yield lst[i:i + s]
+def stats(simulation_results):
+    retweets = [tweet for source in simulation_results for tweet in source]  # Flatten
+    return sum(retweets) / len(retweets), np.count_nonzero(retweets) / len(retweets)
 
 
 # @timecall
 def simulate(A, sources, p, discount=1., depth=1, max_nodes=1000, samples=1, return_stats=True):
     """Simulate tweets starting from sources, return mean retweets and retweet probability."""
-    A = ray.put(A)
-    res = [ray_simulate.remote(A, s, p, discount, depth, max_nodes, samples) for s in chunks(sources, 8)]
-    retweets = itertools.chain(*ray.get(res))
-
-    # sample_calls = [(source, p, discount, depth, max_nodes, samples) for source in sources]
-    # retweets = pool.starmap(pool_simulate, sample_calls)
-
-    # retweets = ((edge_propagate(A, source, p=p, discount=discount, depth=depth, max_nodes=max_nodes)
-    #              for _ in range(samples))
-    #             for source in sources)
-
+    retweets = ((edge_propagate(A, source, p=p, discount=discount, depth=depth, max_nodes=max_nodes)
+                 for _ in range(samples)) for source in sources)
     if return_stats:
-        retweets = [t for ts in retweets for t in ts if t != 0]  # Flatten and remove zeros
-        samples = samples * len(sources)
-        return sum(retweets) / samples, len(retweets) / samples
+        return stats(retweets)
     return retweets
 
 
-def edge_probability_from_retweet_probability(retweet_probability, A, sources, eps=1e-5):
-    """Find edge probability."""
-    return invert_monotone(0, 1, retweet_probability, lambda p: calculate_retweet_probability(A, sources, p), eps)
+def logging(f):
+    def wrapped(*args, **kwargs):
+        print(f'calling {f.__name__}({args},{kwargs})')
+        return f(*args, **kwargs)
 
-
-@timecall
-def discount_factor_from_mean_retweets(mean_retweets, A, sources, p, depth=10, samples=1000, eps=1e-2):
-    """Find discount factor."""
-    print(f'discount: {samples} samples of {len(sources)} sources with p={p} and goal={mean_retweets}')
-    return invert_monotone(0, 1, mean_retweets,
-                           lambda d: simulate(A, sources, p=p, discount=d, depth=depth, samples=samples)[0],
-                           eps)
-
-
-# def fillna_random(list, fill_values):
-#     return [np.random.choice(fill_values) if pd.isna(x) else x for x in list]
+    return wrapped
 
 
 class Simulation:
@@ -190,6 +147,11 @@ class Simulation:
                                     })
         self.sources = tweets.dropna().groupby('author_feature')['source'].unique()
         self.features = self.stats.index
+
+        # self._sim = simulate
+        self._sim = parallel.ray_simulator(8)
+        # self._sim = parallel.pool_simulator(self.A)
+        self._sim = logging(self._sim)
 
         self.params['edge_probability'] = self.edge_probability_from_retweet_probability()
 
@@ -257,27 +219,33 @@ class Simulation:
             params = pd.Series(params, index=default_params.index, dtype=object)
         return params.fillna(default_params)
 
-    def edge_probability_from_retweet_probability(self, sources=None, features=None):
+    def edge_probability_from_retweet_probability(self, sources=None, eps=1e-5, features=None):
         """Find edge probability for given feature vector (or all if none given)."""
         if features is None:
             features = self.features
-        return pd.Series((edge_probability_from_retweet_probability(self.stats.loc[f, 'retweet_probability'],
-                                                                    self.A,
-                                                                    self._default_sources(sources, f, True)
-                                                                    ) for f in features), index=features)
+        return pd.Series((
+            invert_monotone(lambda p: calculate_retweet_probability(self.A,
+                                                                    self._default_sources(sources, f, True),
+                                                                    p),
+                            self.stats.loc[f, 'retweet_probability'],
+                            0, 1,
+                            eps) for f in features), index=features)
 
     @timecall
     def discount_factor_from_mean_retweets(self, sources=None, depth=10, samples=1000, eps=0.1, features=None):
         """Find discount factor for given feature vector (or all if none given)."""
         if features is None:
             features = self.features
-        return pd.Series((discount_factor_from_mean_retweets(self.stats.loc[f, 'mean_retweets'],
-                                                             self.A,
-                                                             self._default_sources(sources, f, True),
-                                                             self.params.loc[f, 'edge_probability'],
-                                                             depth,
-                                                             samples,
-                                                             eps) for f in features), index=features)
+        return pd.Series((
+            invert_monotone(lambda d: self._sim(A=self.A,
+                                                sources=self._default_sources(sources, f, True),
+                                                p=self.params.loc[f, 'edge_probability'],
+                                                discount=d,
+                                                depth=depth,
+                                                samples=samples)[0],
+                            self.stats.loc[f, 'mean_retweets'],
+                            0, 1,
+                            eps=eps) for f in features), index=features)
 
     def simulate(self, feature=None, sources=None, params=None, samples=1, return_stats=True):
         """Simulate messages with given feature vector."""
@@ -285,20 +253,23 @@ class Simulation:
             sources = self._default_sources(sources, feature)
         params = self._default_params(params, feature)
 
-        return simulate(self.A, sources,
-                        p=params.edge_probability,
-                        discount=params.discount_factor,
-                        depth=params.depth,
-                        max_nodes=params.max_nodes,
-                        samples=samples,
-                        return_stats=return_stats)
+        return self._sim(self.A,
+                         sources,
+                         p=params.edge_probability,
+                         discount=params.discount_factor,
+                         depth=params.depth,
+                         max_nodes=params.max_nodes,
+                         samples=samples,
+                         return_stats=return_stats)
 
 
 if __name__ == "__main__":
     # pool = ray.util.multiprocessing.Pool(processes=32)
-    ray.init()
+    # ray.init(num_cpus=50, memory=1000000000)
+    # ray.init()
     datadir = '/Users/ian/Nextcloud'
     # datadir = '/home/sarming'
+    # datadir = '/home/d3000/d300345'
     # read.adjlist(f'{datadir}/anonymized_outer_graph_neos_20200311.adjlist',
     #              save_as=f'{datadir}/outer_neos.npz')
     # A, node_labels = read.labelled_graph(f'{datadir}/outer_neos.npz')
@@ -313,8 +284,8 @@ if __name__ == "__main__":
     # print(sim.edge_probability_from_retweet_probability(sources=sim.sources))
     # print(sim.params.edge_probability)
     # ray.get(sim.discount_factor_from_mean_retweets(samples=1000, eps=0.1))
-    # pool = multiprocessing.Pool(initializer=make_global, initargs=(sim.A,))
-    sim.discount_factor_from_mean_retweets(samples=1000, eps=0.1, features=[('0010', '0010')])
+    # pool = multiprocessing.Pool(500, initializer=make_global, initargs=(sim.A,))
+    sim.discount_factor_from_mean_retweets(samples=1000, eps=0.01, features=[('0010', '0010')])
     # sim.search_parameters(samples=1, eps=0.5,  feature=('0000', '0101') )
     # , feature=('0010', '1010'))
     # print(sim.features.loc[('0010', '1010')])
