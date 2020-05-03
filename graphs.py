@@ -13,8 +13,3 @@ def shifted_laplacian(graph):
     n = graph.number_of_nodes()
     laplacian = sp.sparse.csgraph.laplacian(nx.to_scipy_sparse_matrix(graph), normed=True)
     return sp.sparse.csr_matrix(laplacian - 1 * sp.sparse.eye(n))
-
-
-def uniform_adjacency(graph, prob):
-    A = nx.to_scipy_sparse_matrix(graph)
-    return sp.sparse.csr_matrix(A * prob)
