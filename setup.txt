@@ -9,8 +9,8 @@ conda config --set auto_activate_base false
 conda config --add channels intel
 conda update -n base -c defaults conda
 y
-conda create --name hidalgo intelpython3_core python=3
+conda create --name kpm intelpython3_core python=3
 y
-conda activate hidalgo
-conda install matplotlib tornado graphviz networkx
-pip install profilehooks
+conda activate kpm
+conda install matplotlib tornado graphviz scipy
+pip install profilehooks ray

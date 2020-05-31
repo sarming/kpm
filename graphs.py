@@ -1,6 +1,6 @@
-import networkx as nx
 import numpy as np
 import scipy as sp
+import scipy.sparse
 
 
 def eigvals(graph):
@@ -10,6 +10,6 @@ def eigvals(graph):
 
 
 def shifted_laplacian(graph):
-    n = graph.number_of_nodes()
-    laplacian = sp.sparse.csgraph.laplacian(nx.to_scipy_sparse_matrix(graph), normed=True)
+    n = graph.shape[0]
+    laplacian = sp.sparse.csgraph.laplacian(graph, normed=True)
     return sp.sparse.csr_matrix(laplacian - 1 * sp.sparse.eye(n))

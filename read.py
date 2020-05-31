@@ -1,21 +1,19 @@
 import re
 
-import networkx as nx
 import numpy as np
+import scipy as sp
+import scipy.sparse
 
 
 def metis(file):
-    graph = nx.Graph()
     with open(file) as f:
         (n, m) = f.readline().split()
+        n = int(n)
+        mtx = sp.sparse.lil_matrix((n, n))
         for (node, neighbors) in enumerate(f.readlines()):
-            for v in neighbors.split():
-                # print(node, v)
-                graph.add_edge(node, int(v))
-        assert int(n) == graph.number_of_nodes()
-        assert int(m) == graph.number_of_edges()
-        # print(m)
-    return graph
+            neighbors = [int(v) for v in neighbors.split()]
+            mtx[node, neighbors] = 1.
+    return mtx.tocsr()
 
 
 def eigvals(file):
