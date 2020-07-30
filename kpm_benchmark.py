@@ -2,6 +2,7 @@ import numpy as np
 import ray
 import scipy as sp
 import scipy.sparse
+from profilehooks import profile, timecall
 
 
 def jackson_coef(p, j):
@@ -64,10 +65,12 @@ def chebyshev_estimator(A, coef, num_samples):
 
 @ray.remote
 def ray_chebyshev_estimator_worker(A, coef, num_samples):
+    # A = ray.get(A) # cannot use this here: https://github.com/ray-project/ray/issues/3644#issuecomment-623030302
     A = sp.sparse.csr_matrix(*A)  # reconstruct sparse matrix from numpy data
     return chebyshev_estimator(A, coef, num_samples)
 
 
+@ray.remote
 def ray_chebyshev_estimator(A, coef, num_samples, batch_size=None):
     """Call chebyshev_estimator in parallel with given batch_size."""
     assert len(coef) > 1
@@ -80,8 +83,7 @@ def ray_chebyshev_estimator(A, coef, num_samples, batch_size=None):
     if r: num_batches += 1
     print(f'({num_batches} calls) * (size {batch_size}) = {num_batches * batch_size} samples')
 
-    A = ray.put(((A.data, A.indices, A.indptr), A.shape))
-    estimates = [ray_chebyshev_estimator_worker.remote(A, coef, batch_size) for _ in range(num_batches)]
+    estimates = [ray_chebyshev_estimator_worker.remote(A[0], coef, batch_size) for _ in range(num_batches)]
     estimates = ray.get(estimates)
     return sum(estimates) / num_batches
 
@@ -98,16 +100,21 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples):
     Returns:
         List of estimated eigenvalue counts.
     """
+    A = ray.put(((A.data, A.indices, A.indptr), A.shape))
+    num_intervals = len(bin_edges) - 1
+    batch_size = max((num_samples * num_intervals) // int(4 * ray.cluster_resources()['CPU']), 1)
+
     histogram = []
     for lb, ub in zip(bin_edges, bin_edges[1:]):
         coef = step_jackson_coef(lb, ub, cheb_degree)
         # estimate = chebyshev_estimator(A, coef, num_samples)
-        estimate = ray_chebyshev_estimator(A, coef, num_samples)
+        estimate = ray_chebyshev_estimator.remote([A], coef, num_samples, batch_size=batch_size)
         histogram.append(estimate)
         print('.')
-    return histogram
+    return ray.get(histogram)
 
 
+@timecall
 def laplacian_from_metis(file, save_as=None):
     """Read metis file and return laplacian-1 in CSR format (optionally save to file)."""
     with open(file) as f:
@@ -132,8 +139,11 @@ if __name__ == "__main__":
 
     # A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz')
     A = sp.sparse.load_npz('pokec_full.npz')
+    # A = sp.sparse.load_npz('100.npz')
 
-    hist = estimate_histogram(A, [0.63 - 1, 0.65 - 1], cheb_degree=300, num_samples=200)
+    bin_edges = np.histogram_bin_edges([], 100, range=(-1, 1))
+    hist = estimate_histogram(A, bin_edges, cheb_degree=300, num_samples=200)
+    # hist = estimate_histogram(A, [0.63 - 1, 0.65 - 1], cheb_degree=300, num_samples=200)
     # hist = estimate_histogram(A, [1.55 - 1, 1.57 - 1], cheb_degree=300, num_samples=200)
     # hist = estimate_histogram(A, [0.99 - 1, 1.01 - 1], cheb_degree=300, num_samples=200)
     print(hist)
