@@ -80,6 +80,7 @@ def ray_chebyshev_estimator(A, coef, num_samples, batch_size=None):
     if r: num_batches += 1
     print(f'({num_batches} calls) * (size {batch_size}) = {num_batches * batch_size} samples')
 
+    A = ray.put(((A.data, A.indices, A.indptr), A.shape))
     estimates = [ray_chebyshev_estimator_worker.remote(A, coef, batch_size) for _ in range(num_batches)]
     estimates = ray.get(estimates)
     return sum(estimates) / num_batches
@@ -129,8 +130,8 @@ def laplacian_from_metis(file, save_as=None):
 if __name__ == "__main__":
     ray.init()
 
-    A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz')
-    # A = sp.sparse.load_npz('pokec_full.npz')
+    # A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz')
+    A = sp.sparse.load_npz('pokec_full.npz')
 
     hist = estimate_histogram(A, [0.63 - 1, 0.65 - 1], cheb_degree=300, num_samples=200)
     # hist = estimate_histogram(A, [1.55 - 1, 1.57 - 1], cheb_degree=300, num_samples=200)

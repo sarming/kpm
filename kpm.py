@@ -205,7 +205,11 @@ if __name__ == "__main__":
 
     # exit()
     for i in range(1, 2):
-        graph = read.metis(f'100K/graphs/{i}.metis')
+        # import sys, ray
+        # ray.init(address=sys.argv[1], redis_password=sys.argv[2])
+
+        # graph = read.metis(f'100K/graphs/{i}.metis')
+        graph = read.metis(f'pokec_full.metis')
         A = graphs.shifted_laplacian(graph)
         print("read")
         # kpm_test(A, -0.1, 0.1, 80, 100)

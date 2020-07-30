@@ -21,7 +21,7 @@ RAY_ADDRESS=$ip_prefix$suffix
 
 export RAY_ADDRESS
 
-srun --nodes=1 --ntasks=1 -w $node1 ray start --block --head --redis-port=6379 & # Starting the head
+srun --nodes=1 --ntasks=1 -w $node1 ray start --block --head --redis-port=6379 &# Starting the head
 sleep 10
 # Make sure the head successfully starts before any worker does, otherwise
 # the worker will not be able to connect to redis. In case of longer delay,
@@ -29,7 +29,7 @@ sleep 10
 
 for ((i = 1; i <= $worker_num; i++)); do
   node2=${nodes_array[$i]}
-  srun --nodes=1 --ntasks=1 -w $node2 ray start --block --address=$RAY_ADDRESS & # Starting the workers
+  srun --nodes=1 --ntasks=1 -w $node2 ray start --block --address=$RAY_ADDRESS &# Starting the workers
 done
 sleep 5
 
