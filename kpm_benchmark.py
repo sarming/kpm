@@ -137,6 +137,8 @@ def laplacian_from_metis(file, save_as=None):
 
 def bcast_array(arr=None, comm=MPI.COMM_WORLD):
     rank = comm.Get_rank()
+    assert arr is not None or rank != 0
+
     if rank == 0:
         shape = arr.shape
         dtype = arr.dtype
@@ -150,6 +152,8 @@ def bcast_array(arr=None, comm=MPI.COMM_WORLD):
 
 def copy_array_to_shm(arr=None, comm=MPI.COMM_WORLD):
     rank = comm.Get_rank()
+    assert arr is not None or rank != 0
+
     if rank == 0:
         shape = arr.shape
         dtype = arr.dtype
@@ -166,21 +170,19 @@ def copy_array_to_shm(arr=None, comm=MPI.COMM_WORLD):
     return new_arr
 
 
-if __name__ == "__main__":
-    comm = MPI.COMM_WORLD  # communicator object containing all processes
-    world_size = comm.Get_size()
+def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD):
     rank = comm.Get_rank()
+    assert A is not None or rank != 0
+
     node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
     node_rank = node_comm.Get_rank()
     head_comm = comm.Split(node_rank == 0 or rank == 0, key=rank)
 
-    A = Ad = Ai = Ap = None
+    Ad = Ai = Ap = None
     if rank == 0:
-        A = sp.sparse.load_npz('pokec_full.npz')
         Ad = A.data
         Ai = A.indices
         Ap = A.indptr
-
     if node_rank == 0:  # or rank == 0
         Ad = bcast_array(Ad, head_comm)
         Ai = bcast_array(Ai, head_comm)
@@ -190,7 +192,19 @@ if __name__ == "__main__":
     Ai = copy_array_to_shm(Ai, node_comm)
     Ap = copy_array_to_shm(Ap, node_comm)
 
-    A = sp.sparse.csr_matrix((Ad, Ai, Ap))
+    return sp.sparse.csr_matrix((Ad, Ai, Ap))
+
+
+if __name__ == "__main__":
+    comm = MPI.COMM_WORLD  # communicator object containing all processes
+    world_size = comm.Get_size()
+    rank = comm.Get_rank()
+
+    A = None
+    if rank == 0:
+        A = sp.sparse.load_npz('pokec_full.npz')
+    A = bcast_csr_matrix(A)
+
     As = sp.sparse.load_npz('pokec_full.npz')
     assert ((A != As).nnz == 0)
 
