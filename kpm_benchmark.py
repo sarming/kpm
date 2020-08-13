@@ -135,48 +135,69 @@ def laplacian_from_metis(file, save_as=None):
         return shifted_laplacian
 
 
+def bcast_array(arr=None, comm=MPI.COMM_WORLD):
+    rank = comm.Get_rank()
+    if rank == 0:
+        shape = arr.shape
+        dtype = arr.dtype
+        comm.bcast((shape, dtype), root=0)
+    else:
+        shape, dtype = comm.bcast(None, root=0)
+        arr = np.empty(shape=shape, dtype=dtype)
+    comm.Bcast(arr, root=0)
+    return arr
+
+
+def copy_array_to_shm(arr=None, comm=MPI.COMM_WORLD):
+    rank = comm.Get_rank()
+    if rank == 0:
+        shape = arr.shape
+        dtype = arr.dtype
+        nbytes = arr.nbytes
+        comm.bcast((shape, dtype, nbytes), root=0)
+    else:
+        (shape, dtype, nbytes) = comm.bcast(None, root=0)
+    win = MPI.Win.Allocate_shared(nbytes if rank == 0 else 0, MPI.BYTE.Get_size(), comm=comm)
+    buf, itemsize = win.Shared_query(0)
+    new_arr = np.ndarray(buffer=buf, dtype=dtype, shape=shape)
+    if rank == 0:
+        np.copyto(new_arr, arr)
+    comm.Barrier()
+    return new_arr
+
+
 if __name__ == "__main__":
     comm = MPI.COMM_WORLD  # communicator object containing all processes
     world_size = comm.Get_size()
     rank = comm.Get_rank()
     node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
     node_rank = node_comm.Get_rank()
-    # node_heads = comm.gather(rank if node_rank == 0 else None, root=0)
     head_comm = comm.Split(node_rank == 0 or rank == 0, key=rank)
 
-    n = None
-    data = None
+    A = Ad = Ai = Ap = None
     if rank == 0:
-        # node_heads = [i for i in node_heads if i is not None]
         A = sp.sparse.load_npz('pokec_full.npz')
+        Ad = A.data
+        Ai = A.indices
+        Ap = A.indptr
 
-        print(A.data)
-        n = 100_000_000
-        # n = A.shape[0]
-        data = np.full(n, rank, float)
+    if node_rank == 0:  # or rank == 0
+        Ad = bcast_array(Ad, head_comm)
+        Ai = bcast_array(Ai, head_comm)
+        Ap = bcast_array(Ap, head_comm)
 
-    n = comm.bcast(n, root=0)
+    Ad = copy_array_to_shm(Ad, node_comm)
+    Ai = copy_array_to_shm(Ai, node_comm)
+    Ap = copy_array_to_shm(Ap, node_comm)
 
-    disp_unit = MPI.DOUBLE.Get_size()
-    if node_rank == 0:
-        win_size = n * disp_unit
-    else:
-        win_size = 0
-    win = MPI.Win.Allocate_shared(win_size, disp_unit, comm=node_comm)
-    buf, itemsize = win.Shared_query(0)
-    ary = np.ndarray(buffer=buf, dtype='d', shape=(n,))
+    A = sp.sparse.csr_matrix((Ad, Ai, Ap))
+    As = sp.sparse.load_npz('pokec_full.npz')
+    assert ((A != As).nnz == 0)
 
-    if node_rank == 0 or rank == 0:
-        if rank != 0:
-            data = np.empty(n, float)
-        head_comm.Bcast(data, root=0)
-        np.copyto(ary, data)
-    comm.Barrier()
-    print(f'{rank}:{ary[0]}')
+    print(f'{rank}:{A[1, 2]} {(A != As).nnz}')
     import time
 
-    time.sleep(10)
-    print(len(ary))
+    # time.sleep(10)
     # ray.init()
 
     # A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz')
