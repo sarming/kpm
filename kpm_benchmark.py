@@ -2,6 +2,7 @@ import numpy as np
 import ray
 import scipy as sp
 import scipy.sparse
+from mpi4py import MPI
 from profilehooks import profile, timecall
 
 
@@ -135,15 +136,57 @@ def laplacian_from_metis(file, save_as=None):
 
 
 if __name__ == "__main__":
-    ray.init()
+    comm = MPI.COMM_WORLD  # communicator object containing all processes
+    world_size = comm.Get_size()
+    rank = comm.Get_rank()
+    node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
+    node_rank = node_comm.Get_rank()
+    # node_heads = comm.gather(rank if node_rank == 0 else None, root=0)
+    head_comm = comm.Split(node_rank == 0 or rank == 0, key=rank)
+
+    n = None
+    data = None
+    if rank == 0:
+        # node_heads = [i for i in node_heads if i is not None]
+        A = sp.sparse.load_npz('pokec_full.npz')
+
+        print(A.data)
+        n = 100_000_000
+        # n = A.shape[0]
+        data = np.full(n, rank, float)
+
+    n = comm.bcast(n, root=0)
+
+    disp_unit = MPI.DOUBLE.Get_size()
+    if node_rank == 0:
+        win_size = n * disp_unit
+    else:
+        win_size = 0
+    win = MPI.Win.Allocate_shared(win_size, disp_unit, comm=node_comm)
+    buf, itemsize = win.Shared_query(0)
+    ary = np.ndarray(buffer=buf, dtype='d', shape=(n,))
+
+    if node_rank == 0 or rank == 0:
+        if rank != 0:
+            data = np.empty(n, float)
+        head_comm.Bcast(data, root=0)
+        np.copyto(ary, data)
+    comm.Barrier()
+    print(f'{rank}:{ary[0]}')
+    import time
+
+    time.sleep(10)
+    print(len(ary))
+    # ray.init()
 
     # A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz')
-    A = sp.sparse.load_npz('pokec_full.npz')
+    # A = sp.sparse.load_npz('pokec_full.npz')
+    # print(A[0])
     # A = sp.sparse.load_npz('100.npz')
 
-    bin_edges = np.histogram_bin_edges([], 100, range=(-1, 1))
-    hist = estimate_histogram(A, bin_edges, cheb_degree=300, num_samples=200)
+    # bin_edges = np.histogram_bin_edges([], 100, range=(-1, 1))
+    # hist = estimate_histogram(A, bin_edges, cheb_degree=300, num_samples=200)
     # hist = estimate_histogram(A, [0.63 - 1, 0.65 - 1], cheb_degree=300, num_samples=200)
     # hist = estimate_histogram(A, [1.55 - 1, 1.57 - 1], cheb_degree=300, num_samples=200)
     # hist = estimate_histogram(A, [0.99 - 1, 1.01 - 1], cheb_degree=300, num_samples=200)
-    print(hist)
+    # print(hist)
