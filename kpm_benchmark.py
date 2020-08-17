@@ -89,7 +89,7 @@ def ray_chebyshev_estimator(A, coef, num_samples, batch_size=None):
     return sum(estimates) / num_batches
 
 
-def estimate_histogram(A, bin_edges, cheb_degree, num_samples):
+def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WORLD):
     """Estimate eigenvalue histogram of A.
 
     Args:
@@ -101,18 +101,23 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples):
     Returns:
         List of estimated eigenvalue counts.
     """
-    A = ray.put(((A.data, A.indices, A.indptr), A.shape))
     num_intervals = len(bin_edges) - 1
-    batch_size = max((num_samples * num_intervals) // int(4 * ray.cluster_resources()['CPU']), 1)
+    assert comm.Get_size() >= num_intervals
 
-    histogram = []
-    for lb, ub in zip(bin_edges, bin_edges[1:]):
-        coef = step_jackson_coef(lb, ub, cheb_degree)
-        # estimate = chebyshev_estimator(A, coef, num_samples)
-        estimate = ray_chebyshev_estimator.remote([A], coef, num_samples, batch_size=batch_size)
-        histogram.append(estimate)
-        print('.')
-    return ray.get(histogram)
+    my_bin = comm.Get_rank() % num_intervals
+    bin_comm = comm.Split(my_bin)
+    head_comm = comm.Split(True if bin_comm.Get_rank() == 0 else MPI.UNDEFINED)
+
+    lb = bin_edges[my_bin]
+    ub = bin_edges[my_bin + 1]
+    coef = step_jackson_coef(lb, ub, cheb_degree)
+
+    result = chebyshev_estimator(A, coef, num_samples // bin_comm.Get_size())
+    result = bin_comm.reduce(result, MPI.SUM, root=0)
+
+    if bin_comm.Get_rank() == 0:
+        results = head_comm.gather(result / bin_comm.Get_size(), root=0)
+        return results
 
 
 @timecall
@@ -176,7 +181,7 @@ def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD):
 
     node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
     node_rank = node_comm.Get_rank()
-    head_comm = comm.Split(node_rank == 0 or rank == 0, key=rank)
+    head_comm = comm.Split(True if node_rank == 0 else MPI.UNDEFINED)
 
     Ad = Ai = Ap = None
     if rank == 0:
@@ -196,20 +201,20 @@ def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD):
 
 
 if __name__ == "__main__":
-    comm = MPI.COMM_WORLD  # communicator object containing all processes
+    comm = MPI.COMM_WORLD
     world_size = comm.Get_size()
     rank = comm.Get_rank()
 
     A = None
     if rank == 0:
+        # A = sp.sparse.load_npz('100.npz')
         A = sp.sparse.load_npz('pokec_full.npz')
     A = bcast_csr_matrix(A)
 
-    As = sp.sparse.load_npz('pokec_full.npz')
-    assert ((A != As).nnz == 0)
-
-    print(f'{rank}:{A[1, 2]} {(A != As).nnz}')
-    import time
+    # bin_edges = np.histogram_bin_edges([], 100, range=(-1, 1))
+    hist = estimate_histogram(A, [0.63 - 1, 0.65 - 1, 0, 1], cheb_degree=10, num_samples=100, comm=comm)
+    if rank == 0:
+        print(hist)
 
     # time.sleep(10)
     # ray.init()
