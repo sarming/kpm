@@ -1,5 +1,4 @@
 import numpy as np
-import ray
 import scipy as sp
 import scipy.sparse
 from mpi4py import MPI
@@ -64,31 +63,6 @@ def chebyshev_estimator(A, coef, num_samples):
     return n / num_samples * s
 
 
-@ray.remote
-def ray_chebyshev_estimator_worker(A, coef, num_samples):
-    # A = ray.get(A) # cannot use this here: https://github.com/ray-project/ray/issues/3644#issuecomment-623030302
-    A = sp.sparse.csr_matrix(*A)  # reconstruct sparse matrix from numpy data
-    return chebyshev_estimator(A, coef, num_samples)
-
-
-@ray.remote
-def ray_chebyshev_estimator(A, coef, num_samples, batch_size=None):
-    """Call chebyshev_estimator in parallel with given batch_size."""
-    assert len(coef) > 1
-
-    if batch_size is None:
-        # Use 4 times as many batches as there are CPUs in the cluster
-        batch_size = max(num_samples // int(4 * ray.cluster_resources()['CPU']), 1)
-    batch_size = min(batch_size, num_samples)
-    num_batches, r = divmod(num_samples, batch_size)
-    if r: num_batches += 1
-    print(f'({num_batches} calls) * (size {batch_size}) = {num_batches * batch_size} samples')
-
-    estimates = [ray_chebyshev_estimator_worker.remote(A[0], coef, batch_size) for _ in range(num_batches)]
-    estimates = ray.get(estimates)
-    return sum(estimates) / num_batches
-
-
 def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WORLD):
     """Estimate eigenvalue histogram of A.
 
@@ -106,16 +80,24 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
 
     my_bin = comm.Get_rank() % num_intervals
     bin_comm = comm.Split(my_bin)
-    head_comm = comm.Split(True if bin_comm.Get_rank() == 0 else MPI.UNDEFINED)
+    bin_rank = bin_comm.Get_rank()
+    head_comm = comm.Split(True if bin_rank == 0 else MPI.UNDEFINED)
 
     lb = bin_edges[my_bin]
     ub = bin_edges[my_bin + 1]
     coef = step_jackson_coef(lb, ub, cheb_degree)
 
-    result = chebyshev_estimator(A, coef, num_samples // bin_comm.Get_size())
+    batch_size = max(num_samples // bin_comm.Get_size(), 1)
+
+    # print(f'rank {comm.Get_rank()}: sample [{lb},{ub}] {batch_size} time(s)')
+    if bin_rank == 0:
+        print(
+            f'head {comm.Get_rank()}: compute [{lb},{ub}] with {bin_comm.Get_size()}*{batch_size}={bin_comm.Get_size() * batch_size} sample(s)')
+
+    result = chebyshev_estimator(A, coef, batch_size)
     result = bin_comm.reduce(result, MPI.SUM, root=0)
 
-    if bin_comm.Get_rank() == 0:
+    if bin_rank == 0:
         results = head_comm.gather(result / bin_comm.Get_size(), root=0)
         return results
 
@@ -200,9 +182,14 @@ def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD):
     return sp.sparse.csr_matrix((Ad, Ai, Ap))
 
 
+def interval_edges(n=None):
+    if n is None:  # Intervals from previous experiments (101 bins)
+        return [-1.] + list(np.round(np.histogram_bin_edges([], 99, range=(-0.99, 0.99)), 2)) + [1.]
+    return np.histogram_bin_edges([], n, range=(-1., 1.))
+
+
 if __name__ == "__main__":
     comm = MPI.COMM_WORLD
-    world_size = comm.Get_size()
     rank = comm.Get_rank()
 
     A = None
@@ -211,13 +198,11 @@ if __name__ == "__main__":
         A = sp.sparse.load_npz('pokec_full.npz')
     A = bcast_csr_matrix(A)
 
-    # bin_edges = np.histogram_bin_edges([], 100, range=(-1, 1))
-    hist = estimate_histogram(A, [0.63 - 1, 0.65 - 1, 0, 1], cheb_degree=10, num_samples=100, comm=comm)
+    bin_edges = interval_edges(1)
+    hist = estimate_histogram(A, bin_edges, cheb_degree=300, num_samples=200)
     if rank == 0:
-        print(hist)
-
-    # time.sleep(10)
-    # ray.init()
+        for lb, ub, res in zip(bin_edges, bin_edges[1:], hist):
+            print(f'[{lb + 1},{ub + 1}] {res}')
 
     # A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz')
     # A = sp.sparse.load_npz('pokec_full.npz')
