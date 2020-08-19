@@ -198,7 +198,7 @@ if __name__ == "__main__":
         A = sp.sparse.load_npz('pokec_full.npz')
     A = bcast_csr_matrix(A)
 
-    bin_edges = interval_edges(1)
+    bin_edges = interval_edges()
     hist = estimate_histogram(A, bin_edges, cheb_degree=300, num_samples=200)
     if rank == 0:
         for lb, ub, res in zip(bin_edges, bin_edges[1:], hist):
