@@ -103,14 +103,14 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
 
 
 @timecall
-def laplacian_from_metis(file, save_as=None):
+def laplacian_from_metis(file, save_as=None, zero_based=False):
     """Read metis file and return laplacian-1 in CSR format (optionally save to file)."""
     with open(file) as f:
         (n, m) = f.readline().split()
         n = int(n)
         mtx = sp.sparse.lil_matrix((n, n))
         for (node, neighbors) in enumerate(f.readlines()):
-            neighbors = [int(v) for v in neighbors.split()]
+            neighbors = [int(v) - (1 if not zero_based else 0) for v in neighbors.split()]
             mtx[node, neighbors] = 1.
 
         laplacian = sp.sparse.csgraph.laplacian(mtx.tocsr(), normed=True)
@@ -194,24 +194,13 @@ if __name__ == "__main__":
 
     A = None
     if rank == 0:
-        # A = sp.sparse.load_npz('100.npz')
-        A = sp.sparse.load_npz('pokec_full.npz')
+        A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz', zero_based=True)
+        # A = sp.sparse.load_npz('pokec_full.npz')
     A = bcast_csr_matrix(A)
 
-    bin_edges = interval_edges()
+    bin_edges = np.histogram_bin_edges([], 100, range=(-1, 1))
     hist = estimate_histogram(A, bin_edges, cheb_degree=300, num_samples=200)
     if rank == 0:
         for lb, ub, res in zip(bin_edges, bin_edges[1:], hist):
             print(f'[{lb + 1},{ub + 1}] {res}')
 
-    # A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz')
-    # A = sp.sparse.load_npz('pokec_full.npz')
-    # print(A[0])
-    # A = sp.sparse.load_npz('100.npz')
-
-    # bin_edges = np.histogram_bin_edges([], 100, range=(-1, 1))
-    # hist = estimate_histogram(A, bin_edges, cheb_degree=300, num_samples=200)
-    # hist = estimate_histogram(A, [0.63 - 1, 0.65 - 1], cheb_degree=300, num_samples=200)
-    # hist = estimate_histogram(A, [1.55 - 1, 1.57 - 1], cheb_degree=300, num_samples=200)
-    # hist = estimate_histogram(A, [0.99 - 1, 1.01 - 1], cheb_degree=300, num_samples=200)
-    # print(hist)
