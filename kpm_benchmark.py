@@ -2,8 +2,7 @@ import numpy as np
 import scipy as sp
 import scipy.sparse
 from mpi4py import MPI
-from profilehooks import profile, timecall
-
+# from profilehooks import profile, timecall
 
 def jackson_coef(p, j):
     """Return the j-th Jackson coefficient for degree p Chebyshev polynomial."""
@@ -63,6 +62,7 @@ def chebyshev_estimator(A, coef, num_samples):
     return n / num_samples * s
 
 
+# @timecall
 def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WORLD):
     """Estimate eigenvalue histogram of A.
 
@@ -102,9 +102,17 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
         return results
 
 
-@timecall
 def laplacian_from_metis(file, save_as=None, zero_based=False):
-    """Read metis file and return laplacian-1 in CSR format (optionally save to file)."""
+    """Read METIS file and return Laplacian-1 in CSR format (optionally save to file).
+
+    Args:
+        file: filename of METIS file
+        save_as: optinal filename of .npz file
+        zero_based: first vertex has has index 0 instead of 1
+
+    Returns:
+        Laplacian - 1 as csr_matrix.
+    """
     with open(file) as f:
         (n, m) = f.readline().split()
         n = int(n)
@@ -158,6 +166,7 @@ def copy_array_to_shm(arr=None, comm=MPI.COMM_WORLD):
 
 
 def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD):
+    """Broadcast csr_matrix A (using shared memory)."""
     rank = comm.Get_rank()
     assert A is not None or rank != 0
 
@@ -198,9 +207,12 @@ if __name__ == "__main__":
         # A = sp.sparse.load_npz('pokec_full.npz')
     A = bcast_csr_matrix(A)
 
-    bin_edges = np.histogram_bin_edges([], 100, range=(-1, 1))
-    hist = estimate_histogram(A, bin_edges, cheb_degree=300, num_samples=200)
+    num_intervals = 100
+    num_samples = 200
+    cheb_degree = 300
+
+    bin_edges = np.histogram_bin_edges([], num_intervals, range=(-1, 1))
+    hist = estimate_histogram(A, bin_edges, cheb_degree=cheb_degree, num_samples=num_samples)
     if rank == 0:
         for lb, ub, res in zip(bin_edges, bin_edges[1:], hist):
             print(f'[{lb + 1},{ub + 1}] {res}')
-

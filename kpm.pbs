@@ -10,8 +10,10 @@ module load python/3.8
 module load mpi4py
 
 OUTFILE=kpm-$PBS_JOBID-$(date +"%Y%m%dT%H%M").out
-uniq $PBS_NODEFILE|wc -l > $OUTFILE
 
+# Output number of nodes and processes
+uniq $PBS_NODEFILE|wc -l > $OUTFILE
 cat $PBS_NODEFILE|wc -l >>$OUTFILE
+
 /usr/bin/time mpirun python kpm_benchmark.py >>$OUTFILE 2>&1
 
