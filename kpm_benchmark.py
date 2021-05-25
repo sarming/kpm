@@ -2,6 +2,7 @@ import numpy as np
 import scipy as sp
 import scipy.sparse
 from mpi4py import MPI
+import time
 # from profilehooks import profile, timecall
 
 def jackson_coef(p, j):
@@ -203,11 +204,12 @@ if __name__ == "__main__":
 
     A = None
     if rank == 0:
-        A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz', zero_based=True)
-        # A = sp.sparse.load_npz('pokec_full.npz')
+        startTime = time.time()
+        #A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz', zero_based=True)
+        A = sp.sparse.load_npz('pokec_full.npz')
     A = bcast_csr_matrix(A)
 
-    num_intervals = 100
+    num_intervals = 101
     num_samples = 200
     cheb_degree = 300
 
@@ -216,3 +218,5 @@ if __name__ == "__main__":
     if rank == 0:
         for lb, ub, res in zip(bin_edges, bin_edges[1:], hist):
             print(f'[{lb + 1},{ub + 1}] {res}')
+        endTime = time.time()
+        print(endTime - startTime)
