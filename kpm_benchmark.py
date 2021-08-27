@@ -1,9 +1,9 @@
+import argparse
 import numpy as np
 import scipy as sp
 import scipy.sparse
 from mpi4py import MPI
 import time
-# from profilehooks import profile, timecall
 
 def jackson_coef(p, j):
     """Return the j-th Jackson coefficient for degree p Chebyshev polynomial."""
@@ -82,7 +82,7 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
     my_bin = comm.Get_rank() % num_intervals
     bin_comm = comm.Split(my_bin)
     bin_rank = bin_comm.Get_rank()
-    head_comm = comm.Split(True if bin_rank == 0 else MPI.UNDEFINED)
+    head_comm = comm.Split(bin_rank)
 
     lb = bin_edges[my_bin]
     ub = bin_edges[my_bin + 1]
@@ -166,14 +166,23 @@ def copy_array_to_shm(arr=None, comm=MPI.COMM_WORLD):
     return new_arr
 
 
-def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD):
+def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD, numa_size=None):
     """Broadcast csr_matrix A (using shared memory)."""
     rank = comm.Get_rank()
     assert A is not None or rank != 0
 
-    node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
-    node_rank = node_comm.Get_rank()
-    head_comm = comm.Split(True if node_rank == 0 else MPI.UNDEFINED)
+    #Default Setting
+    if numa_size is None:
+        node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
+        node_rank = node_comm.Get_rank()
+        head_comm = comm.Split(node_rank)
+
+    #Replicate Matrix per ccNuma domain
+    else:
+        nodeTeamId = rank // numa_size
+        node_comm = comm.Split(nodeTeamId)
+        node_rank = node_comm.Get_rank()
+        head_comm = comm.Split(node_rank)
 
     Ad = Ai = Ap = None
     if rank == 0:
@@ -197,21 +206,43 @@ def interval_edges(n=None):
         return [-1.] + list(np.round(np.histogram_bin_edges([], 99, range=(-0.99, 0.99)), 2)) + [1.]
     return np.histogram_bin_edges([], n, range=(-1., 1.))
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i','--intervals', help="number of intervals to compute", type=int, required=True)
+    parser.add_argument('-s','--samples', help="number of samples performed per interval", type=int, required=True)
+    parser.add_argument('-d','--degree', help="degree of polynomial for approximation", type=int, required=True)
+    parser.add_argument('-g','--graph', help="input graph in metis or npz format")
+
+    parser.add_argument('--numa_cores', help="number of cores per ccNuma domain (leave empty if unknown)", type=int)
+    args = parser.parse_args()
+    return args
 
 if __name__ == "__main__":
+    args = parse_args()
+
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
 
     A = None
     if rank == 0:
         startTime = time.time()
-        #A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz', zero_based=True)
-        A = sp.sparse.load_npz('pokec_full.npz')
-    A = bcast_csr_matrix(A)
+        print(args)
+        if args.graph.endswith('.metis'):
+            A = laplacian_from_metis(args.graph, save_as=args.graph.replace('.metis', '.npz'), zero_based=True)
+        elif args.graph.endswith('.npz'):
+            A = sp.sparse.load_npz(args.graph)
+        else:
+            raise ValueError(f"Unknown graph file format {args.graph}. Terminating...")
+            comm.abort()
+    A = bcast_csr_matrix(A, numa_size = args.numa_cores)
 
-    num_intervals = 101
-    num_samples = 200
-    cheb_degree = 300
+    comm.Barrier()
+    if rank == 0:
+        endReadTime = time.time()
+
+    num_intervals = args.intervals
+    num_samples = args.samples
+    cheb_degree = args.degree
 
     bin_edges = np.histogram_bin_edges([], num_intervals, range=(-1, 1))
     hist = estimate_histogram(A, bin_edges, cheb_degree=cheb_degree, num_samples=num_samples)
@@ -219,4 +250,6 @@ if __name__ == "__main__":
         for lb, ub, res in zip(bin_edges, bin_edges[1:], hist):
             print(f'[{lb + 1},{ub + 1}] {res}')
         endTime = time.time()
-        print(endTime - startTime)
+        print("Read Time: " + str(endReadTime - startTime))
+        print("Total Time: " + str(endTime - startTime))
+        
