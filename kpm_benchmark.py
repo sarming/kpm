@@ -1,7 +1,11 @@
+import time
+
 import numpy as np
 import scipy as sp
 import scipy.sparse
 from mpi4py import MPI
+
+
 # from profilehooks import profile, timecall
 
 def jackson_coef(p, j):
@@ -165,14 +169,18 @@ def copy_array_to_shm(arr=None, comm=MPI.COMM_WORLD):
     return new_arr
 
 
-def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD):
+def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD, cores_per_team=None):
     """Broadcast csr_matrix A (using shared memory)."""
     rank = comm.Get_rank()
     assert A is not None or rank != 0
 
-    node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
+    if cores_per_team is None:
+        node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
+    else:
+        nodeTeamId = rank // cores_per_team
+        node_comm = comm.Split(nodeTeamId)
     node_rank = node_comm.Get_rank()
-    head_comm = comm.Split(True if node_rank == 0 else MPI.UNDEFINED)
+    head_comm = comm.Split(node_rank)  # (True if node_rank == 0 else MPI.UNDEFINED)
 
     Ad = Ai = Ap = None
     if rank == 0:
@@ -197,22 +205,33 @@ def interval_edges(n=None):
     return np.histogram_bin_edges([], n, range=(-1., 1.))
 
 
-if __name__ == "__main__":
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-
-    A = None
-    if rank == 0:
-        A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz', zero_based=True)
-        # A = sp.sparse.load_npz('pokec_full.npz')
-    A = bcast_csr_matrix(A)
-
-    num_intervals = 100
-    num_samples = 200
-    cheb_degree = 300
+def kpm(A, num_intervals=2, num_samples=128, cheb_degree=2, comm=MPI.COMM_WORLD):
+    size = comm.Get_size()
+    assert size >= num_intervals
+    assert size % num_intervals == 0
+    assert num_samples % (size // num_intervals) == 0
 
     bin_edges = np.histogram_bin_edges([], num_intervals, range=(-1, 1))
-    hist = estimate_histogram(A, bin_edges, cheb_degree=cheb_degree, num_samples=num_samples)
-    if rank == 0:
+    hist = estimate_histogram(A, bin_edges, cheb_degree=cheb_degree, num_samples=num_samples, comm=comm)
+    return hist, bin_edges
+
+
+if __name__ == "__main__":
+    num_intervals = 100
+    num_samples = 256
+    cheb_degree = 300
+    cores_per_team = None
+
+    A = None
+    head = MPI.COMM_WORLD.Get_rank() == 0
+    if head:
+        A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz', zero_based=True)
+        # A = sp.sparse.load_npz('pokec_full.npz')
+    A = bcast_csr_matrix(A, cores_per_team=cores_per_team)
+
+    t = time.time()
+    hist, bin_edges = kpm(A, num_intervals=num_intervals, num_samples=num_samples, cheb_degree=cheb_degree)
+    if head:
+        print(f'time: {time.time() - t}')
         for lb, ub, res in zip(bin_edges, bin_edges[1:], hist):
             print(f'[{lb + 1},{ub + 1}] {res}')
