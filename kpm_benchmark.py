@@ -1,3 +1,4 @@
+import argparse
 import time
 
 import numpy as np
@@ -85,7 +86,7 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
     my_bin = comm.Get_rank() % num_intervals
     bin_comm = comm.Split(my_bin)
     bin_rank = bin_comm.Get_rank()
-    head_comm = comm.Split(True if bin_rank == 0 else MPI.UNDEFINED)
+    head_comm = comm.Split(bin_rank)  # (True if bin_rank == 0 else MPI.UNDEFINED)
 
     lb = bin_edges[my_bin]
     ub = bin_edges[my_bin + 1]
@@ -169,15 +170,17 @@ def copy_array_to_shm(arr=None, comm=MPI.COMM_WORLD):
     return new_arr
 
 
-def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD, cores_per_team=None):
+def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD, numa_size=None):
     """Broadcast csr_matrix A (using shared memory)."""
     rank = comm.Get_rank()
     assert A is not None or rank != 0
 
-    if cores_per_team is None:
+    # Default Setting
+    if numa_size is None:
         node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
+    # Replicate Matrix per ccNuma domain
     else:
-        nodeTeamId = rank // cores_per_team
+        nodeTeamId = rank // numa_size
         node_comm = comm.Split(nodeTeamId)
     node_rank = node_comm.Get_rank()
     head_comm = comm.Split(node_rank)  # (True if node_rank == 0 else MPI.UNDEFINED)
@@ -205,7 +208,19 @@ def interval_edges(n=None):
     return np.histogram_bin_edges([], n, range=(-1., 1.))
 
 
-def kpm(A, num_intervals=2, num_samples=128, cheb_degree=2, comm=MPI.COMM_WORLD):
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-i', '--intervals', help="number of intervals to compute", type=int, required=True)
+    parser.add_argument('-s', '--samples', help="number of samples performed per interval", type=int, required=True)
+    parser.add_argument('-d', '--degree', help="degree of polynomial for approximation", type=int, required=True)
+    parser.add_argument('-g', '--graph', help="input graph in metis or npz format", required=True)
+
+    parser.add_argument('--numa_cores', help="number of cores per ccNuma domain (leave empty if unknown)", type=int)
+    args = parser.parse_args()
+    return args
+
+
+def kpm(A, num_intervals=100, num_samples=256, cheb_degree=300, comm=MPI.COMM_WORLD):
     size = comm.Get_size()
     assert size >= num_intervals
     assert size % num_intervals == 0
@@ -217,21 +232,32 @@ def kpm(A, num_intervals=2, num_samples=128, cheb_degree=2, comm=MPI.COMM_WORLD)
 
 
 if __name__ == "__main__":
-    num_intervals = 100
-    num_samples = 256
-    cheb_degree = 300
-    cores_per_team = None
+    args = parse_args()
+
+    comm = MPI.COMM_WORLD
+    head = comm.Get_rank() == 0
 
     A = None
-    head = MPI.COMM_WORLD.Get_rank() == 0
     if head:
-        A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz', zero_based=True)
-        # A = sp.sparse.load_npz('pokec_full.npz')
-    A = bcast_csr_matrix(A, cores_per_team=cores_per_team)
+        startTime = time.time()
+        print(args)
+        print(f"mpi_size: {comm.Get_size()}")
+        if args.graph.endswith('.metis'):
+            A = laplacian_from_metis(args.graph, save_as=args.graph.replace('.metis', '.npz'), zero_based=True)
+        elif args.graph.endswith('.npz'):
+            A = sp.sparse.load_npz(args.graph)
+        else:
+            raise ValueError(f"Unknown graph file format {args.graph}. Terminating...")
+            comm.abort()
+    A = bcast_csr_matrix(A, numa_size=args.numa_cores)
 
-    t = time.time()
-    hist, bin_edges = kpm(A, num_intervals=num_intervals, num_samples=num_samples, cheb_degree=cheb_degree)
+    comm.Barrier()
     if head:
-        print(f'time: {time.time() - t}')
+        endReadTime = time.time()
+    hist, bin_edges = kpm(A, num_intervals=args.intervals, num_samples=args.samples, cheb_degree=args.degree)
+    if head:
+        endTime = time.time()
         for lb, ub, res in zip(bin_edges, bin_edges[1:], hist):
             print(f'[{lb + 1},{ub + 1}] {res}')
+        print("Read Time: " + str(endReadTime - startTime))
+        print("Total Time: " + str(endTime - startTime))
