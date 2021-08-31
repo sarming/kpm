@@ -15,31 +15,6 @@ def metis(file):
             mtx[node, neighbors] = 1.
     return mtx.tocsr()
 
-def adjlist(file, save_as=None):
-    import networkx as nx
-    graph = nx.read_adjlist(file, nodetype=int, create_using=nx.DiGraph)
-    mtx = nx.to_scipy_sparse_matrix(graph)
-    laplacian = sp.sparse.csgraph.laplacian(mtx, normed=True)
-    n = laplacian.shape[0]
-    shifted_laplacian = laplacian - sp.sparse.eye(n)
-    if save_as:
-        sp.sparse.save_npz(save_as, shifted_laplacian)
-    return shifted_laplacian
-    with open(file) as f:
-        (n, m) = f.readline().split()
-        n = int(n)
-        mtx = sp.sparse.lil_matrix((n, n))
-        for (node, neighbors) in enumerate(f.readlines()):
-            neighbors = [int(v) for v in neighbors.split()]
-            mtx[node, neighbors] = 1.
-
-        laplacian = sp.sparse.csgraph.laplacian(mtx.tocsr(), normed=True)
-        shifted_laplacian = laplacian - sp.sparse.eye(n)
-
-        if save_as:
-            sp.sparse.save_npz(save_as, shifted_laplacian)
-
-        return shifted_laplacian
 
 def eigvals(file):
     with open(file) as f:
