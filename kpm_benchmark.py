@@ -67,6 +67,37 @@ def chebyshev_estimator(A, coef, num_samples):
     return n / num_samples * s
 
 
+def procs_for_interval(interval, num_samples, samples_per_proc):
+    first_sample = interval * num_samples
+
+    first_proc = first_sample // samples_per_proc
+    end_proc, r = divmod(first_sample + num_samples, samples_per_proc)
+    if r:
+        end_proc += 1
+
+    return range(first_proc, end_proc)
+
+
+def num_samples_i_p(interval, proc, num_samples, samples_per_proc):
+    first_sample_i = interval * num_samples
+    first_sample_p = proc * samples_per_proc
+
+    first_sample = max(first_sample_i, first_sample_p)
+    last_sample = min(first_sample_i + num_samples, first_sample_p + samples_per_proc)
+
+    return last_sample - first_sample
+
+
+def toy(size, num_intervals, num_samples):
+    assert (num_samples * num_intervals) % size == 0
+    samples_per_proc = (num_intervals * num_samples) // size
+    i_comms = [list(procs_for_interval(i, num_samples, samples_per_proc)) for i in range(num_intervals)]
+    head_comm = [(i * num_samples) // samples_per_proc for i in range(num_intervals)]
+    print(i_comms)
+    print(head_comm)
+    print([[num_samples_i_p(i, p, num_samples, samples_per_proc) for p in procs] for i, procs in enumerate(i_comms)])
+
+
 # @timecall
 def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WORLD):
     """Estimate eigenvalue histogram of A.
@@ -81,30 +112,48 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
         List of estimated eigenvalue counts.
     """
     num_intervals = len(bin_edges) - 1
-    assert comm.Get_size() >= num_intervals
+    size = comm.Get_size()
 
-    my_bin = comm.Get_rank() % num_intervals
-    bin_comm = comm.Split(my_bin)
-    bin_rank = bin_comm.Get_rank()
-    head_comm = comm.Split(bin_rank)  # (True if bin_rank == 0 else MPI.UNDEFINED)
+    assert num_intervals <= size  # Otherwise head_comm does not work
+    assert (num_samples * num_intervals) % size == 0
 
-    lb = bin_edges[my_bin]
-    ub = bin_edges[my_bin + 1]
-    coef = step_jackson_coef(lb, ub, cheb_degree)
+    samples_per_proc = (num_intervals * num_samples) // size
 
-    batch_size = max(num_samples // bin_comm.Get_size(), 1)
+    i_comms = [procs_for_interval(i, num_samples, samples_per_proc) for i in range(num_intervals)]
+    assert num_samples * num_intervals == sum(
+        num_samples_i_p(i, p, num_samples, samples_per_proc) for i, procs in enumerate(i_comms) for p in procs)
 
-    # print(f'rank {comm.Get_rank()}: sample [{lb},{ub}] {batch_size} time(s)')
-    if bin_rank == 0:
-        print(
-            f'head {comm.Get_rank()}: compute [{lb},{ub}] with {bin_comm.Get_size()}*{batch_size}={bin_comm.Get_size() * batch_size} sample(s)')
+    head_comm = [(i * num_samples) // samples_per_proc for i in range(num_intervals)]
+    assert head_comm == [procs[0] for procs in i_comms]
 
-    result = chebyshev_estimator(A, coef, batch_size)
-    result = bin_comm.reduce(result, MPI.SUM, root=0)
+    if comm.Get_rank() == 0:
+        print(f'procs: {i_comms}')
+        print(f'heads: {head_comm}')
+        print("samples: ",
+              [[num_samples_i_p(i, p, num_samples, samples_per_proc) for p in procs] for i, procs in
+               enumerate(i_comms)])
 
-    if bin_rank == 0:
-        results = head_comm.gather(result / bin_comm.Get_size(), root=0)
-        return results
+    i_comms = map(comm.Create_group, map(comm.group.Incl, i_comms))
+    head_comm = comm.Create_group(comm.group.Incl(head_comm))
+
+    for i, i_comm in enumerate(i_comms):
+        if i_comm != MPI.COMM_NULL:
+            batch_size = num_samples_i_p(i, comm.Get_rank(), num_samples, samples_per_proc)
+
+            lb = bin_edges[i]
+            ub = bin_edges[i + 1]
+            coef = step_jackson_coef(lb, ub, cheb_degree)
+
+            # print(f'rank {comm.Get_rank()}: sample [{lb},{ub}] {batch_size} time(s)')
+            if i_comm.Get_rank() == 0:
+                print(f'head {comm.Get_rank()}: compute [{lb},{ub}] with {i_comm.Get_size()} procs')
+
+            result = chebyshev_estimator(A, coef, batch_size)
+            result = i_comm.reduce(result, MPI.SUM, root=0)
+            if i_comm.Get_rank() == 0:
+                assert head_comm != MPI.COMM_NULL
+                result = head_comm.gather(result / i_comm.Get_size(), root=0)
+    return result
 
 
 def laplacian_from_metis(file, save_as=None, zero_based=False):
@@ -223,8 +272,7 @@ def parse_args():
 def kpm(A, num_intervals=100, num_samples=256, cheb_degree=300, comm=MPI.COMM_WORLD):
     size = comm.Get_size()
     assert size >= num_intervals
-    assert size % num_intervals == 0
-    assert num_samples % (size // num_intervals) == 0
+    assert (num_samples * num_intervals) % size == 0
 
     bin_edges = np.histogram_bin_edges([], num_intervals, range=(-1, 1))
     hist = estimate_histogram(A, bin_edges, cheb_degree=cheb_degree, num_samples=num_samples, comm=comm)
