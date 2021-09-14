@@ -114,13 +114,12 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
     num_intervals = len(bin_edges) - 1
     size = comm.Get_size()
 
-    assert num_intervals <= size  # Otherwise head_comm does not work
     assert (num_samples * num_intervals) % size == 0
 
     samples_per_proc = (num_intervals * num_samples) // size
 
     i_comms = [procs_for_interval(i, num_samples, samples_per_proc) for i in range(num_intervals)]
-    assert num_samples * num_intervals == sum(
+    assert num_intervals * num_samples == sum(
         num_samples_i_p(i, p, num_samples, samples_per_proc) for i, procs in enumerate(i_comms) for p in procs)
 
     head_comm = [(i * num_samples) // samples_per_proc for i in range(num_intervals)]
@@ -133,9 +132,10 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
               [[num_samples_i_p(i, p, num_samples, samples_per_proc) for p in procs] for i, procs in
                enumerate(i_comms)])
 
-    i_comms = map(comm.Create_group, map(comm.group.Incl, i_comms))
-    head_comm = comm.Create_group(comm.group.Incl(head_comm))
+    i_comms = list(map(comm.Create_group, map(comm.group.Incl, i_comms)))
+    head_comm = comm.Create_group(comm.group.Incl(list(set(head_comm))))
 
+    results = [None] * num_intervals
     for i, i_comm in enumerate(i_comms):
         if i_comm != MPI.COMM_NULL:
             batch_size = num_samples_i_p(i, comm.Get_rank(), num_samples, samples_per_proc)
@@ -149,11 +149,15 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
                 print(f'head {comm.Get_rank()}: compute [{lb},{ub}] with {i_comm.Get_size()} procs')
 
             result = chebyshev_estimator(A, coef, batch_size)
-            result = i_comm.reduce(result, MPI.SUM, root=0)
-            if i_comm.Get_rank() == 0:
-                assert head_comm != MPI.COMM_NULL
-                result = head_comm.gather(result / i_comm.Get_size(), root=0)
-    return result
+            results[i] = i_comm.reduce(result, MPI.SUM, root=0)
+    if head_comm != MPI.COMM_NULL:
+        for i, i_comm in enumerate(i_comms):
+            if head_comm.Get_rank() == 0:
+                if i_comm == MPI.COMM_NULL:
+                    results[i] = head_comm.recv(tag=i)
+            elif i_comm != MPI.COMM_NULL and i_comm.Get_rank() == 0:
+                head_comm.send(results[i], dest=0, tag=i)
+    return results
 
 
 def laplacian_from_metis(file, save_as=None, zero_based=False):
@@ -271,8 +275,8 @@ def parse_args():
 
 def kpm(A, num_intervals=100, num_samples=256, cheb_degree=300, comm=MPI.COMM_WORLD):
     size = comm.Get_size()
-    assert size >= num_intervals
-    assert (num_samples * num_intervals) % size == 0
+    assert size <= num_intervals * num_samples
+    assert (num_intervals * num_samples) % size == 0
 
     bin_edges = np.histogram_bin_edges([], num_intervals, range=(-1, 1))
     hist = estimate_histogram(A, bin_edges, cheb_degree=cheb_degree, num_samples=num_samples, comm=comm)
