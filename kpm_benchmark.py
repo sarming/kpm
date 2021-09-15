@@ -155,8 +155,10 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
             if head_comm.Get_rank() == 0:
                 if i_comm == MPI.COMM_NULL:
                     results[i] = head_comm.recv(tag=i)
+                else:
+                    results[i] /= i_comm.Get_size()
             elif i_comm != MPI.COMM_NULL and i_comm.Get_rank() == 0:
-                head_comm.send(results[i], dest=0, tag=i)
+                head_comm.send(results[i] / i_comm.Get_size(), dest=0, tag=i)
     return results
 
 
