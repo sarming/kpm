@@ -59,86 +59,95 @@ def chebyshev_sample(A, coef, v, return_all=False):
     return samples if return_all else sample
 
 
-def chebyshev_estimator(A, coef, num_samples):
-    """Estimate trace of coef(A) with num_samples via Hutchinson's estimator."""
+def chebyshev_estimator(A, coef, samples):
+    """Estimate trace of coef(A) with samples via Hutchinson's estimator."""
     assert len(coef) > 1
     n = A.shape[0]
-    s = sum(chebyshev_sample(A, coef, random_vector(n)) for _ in range(num_samples))
-    return n / num_samples * s
+    s = sum(chebyshev_sample(A, coef, random_vector(n)) for _ in range(samples))
+    return n / samples * s
 
 
-def procs_for_interval(interval, num_samples, samples_per_proc):
-    first_sample = interval * num_samples
+def procs_for_interval(interval, samples_per_interval, samples_per_proc):
+    first_sample = interval * samples_per_interval
 
     first_proc = first_sample // samples_per_proc
-    end_proc, r = divmod(first_sample + num_samples, samples_per_proc)
+    end_proc, r = divmod(first_sample + samples_per_interval, samples_per_proc)
     if r:
         end_proc += 1
 
     return range(first_proc, end_proc)
 
 
-def num_samples_i_p(interval, proc, num_samples, samples_per_proc):
-    first_sample_i = interval * num_samples
+def num_samples_i_p(interval, proc, samples_per_interval, samples_per_proc):
+    first_sample_i = interval * samples_per_interval
     first_sample_p = proc * samples_per_proc
 
     first_sample = max(first_sample_i, first_sample_p)
-    last_sample = min(first_sample_i + num_samples, first_sample_p + samples_per_proc)
+    last_sample = min(first_sample_i + samples_per_interval, first_sample_p + samples_per_proc)
 
     return last_sample - first_sample
 
 
-def toy(size, num_intervals, num_samples):
-    assert (num_samples * num_intervals) % size == 0
-    samples_per_proc = (num_intervals * num_samples) // size
-    i_comms = [list(procs_for_interval(i, num_samples, samples_per_proc)) for i in range(num_intervals)]
-    head_comm = [(i * num_samples) // samples_per_proc for i in range(num_intervals)]
-    print(i_comms)
-    print(head_comm)
-    print([[num_samples_i_p(i, p, num_samples, samples_per_proc) for p in procs] for i, procs in enumerate(i_comms)])
+def toy(size, intervals, samples):
+    print("remainder:", (samples * intervals) % size)
+    samples_per_proc, r = divmod(intervals * samples, size)
+    if r:
+        samples_per_proc += 1
+    i_comms = [procs_for_interval(i, samples, samples_per_proc) for i in range(intervals)]
+    head_comm = [(i * samples) // samples_per_proc for i in range(intervals)]
+    print("procs per interval:", i_comms)
+    print("heads:", head_comm)
+    print("samples per proc:", [[num_samples_i_p(i, p, samples, samples_per_proc)
+          for p in procs] for i, procs in enumerate(i_comms)])
+    print("total number of samples:", sum(num_samples_i_p(i, p, samples, samples_per_proc)
+          for i, procs in enumerate(i_comms) for p in procs))
+    print(intervals * samples)
+    print("last proc used:", i_comms[-1][-1])
 
 
 # @timecall
-def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WORLD):
+def estimate_histogram(A, bin_edges, cheb_degree, samples, comm=MPI.COMM_WORLD):
     """Estimate eigenvalue histogram of A.
 
     Args:
         A: sparse matrix
         bin_edges: edges of histogram bins (NumPy style)
         cheb_degree: degree of Chebyshev polynomial
-        num_samples: number of samples to use per interval
+        samples: number of samples to use per interval
 
     Returns:
         List of estimated eigenvalue counts.
     """
-    num_intervals = len(bin_edges) - 1
+    intervals = len(bin_edges) - 1
     size = comm.Get_size()
 
-    assert (num_samples * num_intervals) % size == 0
+    assert (samples * intervals) % size == 0
 
-    samples_per_proc = (num_intervals * num_samples) // size
+    samples_per_proc = (intervals * samples) // size
 
-    i_comms = [procs_for_interval(i, num_samples, samples_per_proc) for i in range(num_intervals)]
-    assert num_intervals * num_samples == sum(
-        num_samples_i_p(i, p, num_samples, samples_per_proc) for i, procs in enumerate(i_comms) for p in procs)
+    i_comms = [procs_for_interval(i, samples, samples_per_proc) for i in range(intervals)]
+    assert intervals * samples == sum(
+        num_samples_i_p(i, p, samples, samples_per_proc) for i, procs in enumerate(i_comms) for p in procs)
 
-    head_comm = [(i * num_samples) // samples_per_proc for i in range(num_intervals)]
+    head_comm = [(i * samples) // samples_per_proc for i in range(intervals)]
     assert head_comm == [procs[0] for procs in i_comms]
 
     if comm.Get_rank() == 0:
-        print(f'procs: {i_comms}')
-        print(f'heads: {head_comm}')
-        print("samples: ",
-              [[num_samples_i_p(i, p, num_samples, samples_per_proc) for p in procs] for i, procs in
+        print("intervals:", intervals)
+        print("samples:", samples)
+        print("procs:", i_comms)
+        print("heads:", head_comm)
+        print("samples:",
+              [[num_samples_i_p(i, p, samples, samples_per_proc) for p in procs] for i, procs in
                enumerate(i_comms)])
 
     i_comms = list(map(comm.Create_group, map(comm.group.Incl, i_comms)))
     head_comm = comm.Create_group(comm.group.Incl(list(set(head_comm))))
 
-    results = [None] * num_intervals
+    results = [None] * intervals
     for i, i_comm in enumerate(i_comms):
         if i_comm != MPI.COMM_NULL:
-            batch_size = num_samples_i_p(i, comm.Get_rank(), num_samples, samples_per_proc)
+            batch_size = num_samples_i_p(i, comm.Get_rank(), samples, samples_per_proc)
 
             lb = bin_edges[i]
             ub = bin_edges[i + 1]
@@ -271,38 +280,34 @@ def parse_args():
     parser.add_argument('-g', '--graph', help="input graph in metis or npz format", required=True)
 
     parser.add_argument('--numa_cores', help="number of cores per ccNuma domain (leave empty if unknown)", type=int)
-    args = parser.parse_args()
-    return args
+    return parser.parse_args()
 
-def modify_intervals_samples(intervals, samples, cores , delta=10):
+
+def modify_intervals_samples(intervals, samples, cores, delta=10):
     desired_samples = intervals * samples
-    
-    pintervals = [ (intervals + x) for x in range(-delta,delta+1)]
-    psamples = [ (samples + x) for x in range(-delta,delta+1)]
+
+    def loss(x):
+        return abs(x[0] * x[1] - desired_samples)
+
+    pintervals = range(max(intervals - delta, 1), intervals + delta + 1)
+    psamples = range(max(samples - delta, 1), samples + delta + 1)
 
     # List of Parameters to try
-    pParams = list(itertools.product(pintervals, psamples))
+    pParams = itertools.product(pintervals, psamples)
 
-    #Keep only solutions that fulfill constraint intervals*samples
-    fParams =  list(filter(lambda x: x[0]*x[1] % cores == 0, pParams))
+    # Select valid Parameters with smallest error from original values
+    # This throws a ValueError if no valid parameters are found
+    best = min((loss(x), x) for x in pParams if x[0] * x[1] % cores == 0)
+    return best[1]
 
-    #Compute error caused by parameters
-    desired_samples = intervals * samples
-    eParams = list(map(lambda x: abs(x[0]*x[1] - desired_samples), fParams))
 
-    #Select Parameters with smalles error from original values
-    min_index = np.argmin(eParams)
-    solution = fParams[min_index]
-    
-    return solution
-
-def kpm(A, num_intervals=100, num_samples=256, cheb_degree=300, comm=MPI.COMM_WORLD):
+def kpm(A, intervals=100, samples=256, cheb_degree=300, comm=MPI.COMM_WORLD):
     size = comm.Get_size()
-    assert size <= num_intervals * num_samples
-    assert (num_intervals * num_samples) % size == 0
+    assert size <= intervals * samples
+    assert (intervals * samples) % size == 0
 
-    bin_edges = np.histogram_bin_edges([], num_intervals, range=(-1, 1))
-    hist = estimate_histogram(A, bin_edges, cheb_degree=cheb_degree, num_samples=num_samples, comm=comm)
+    bin_edges = np.histogram_bin_edges([], intervals, range=(-1, 1))
+    hist = estimate_histogram(A, bin_edges, cheb_degree=cheb_degree, samples=samples, comm=comm)
     return hist, bin_edges
 
 
@@ -316,39 +321,36 @@ if __name__ == "__main__":
     A = None
     if head:
         startTime = time.time()
-        print(args)
-        print(f"mpi_size: {comm.Get_size()}")
+        print("args:", vars(args))
+        print(f"mpi_size:", comm.Get_size())
         if args.graph.endswith('.metis'):
             A = laplacian_from_metis(args.graph, save_as=args.graph.replace('.metis', '.npz'), zero_based=True)
         elif args.graph.endswith('.npz'):
             A = sp.sparse.load_npz(args.graph)
         else:
             raise ValueError(f"Unknown graph file format {args.graph}. Terminating...")
-            comm.abort()
     A = bcast_csr_matrix(A, numa_size=args.numa_cores)
 
     comm.Barrier()
     if head:
         endReadTime = time.time()
-    
+
     intervals = args.intervals
     samples = args.samples
     cheb_degree = args.degree
-    
-    #Modify Intervals and Samples if divisibility not fulfilled
+
+    # Modify Intervals and Samples if divisibility not fulfilled
     if intervals * samples % size != 0:
         (intervals, samples) = modify_intervals_samples(intervals, samples, size)
-        if rank == 0:
-            print("WARNING: Intervals + Samples modified. New values i=" + str(num_intervals) + " s=" + str(num_samples))
-            perror = (abs(intervals * samples -  args.intervals * args.samples) / (args.samples * args.intervals)) * 100
-            print("Error of " + str(perror) +"%")
-        
-        
-    hist, bin_edges = kpm(A, num_intervals=intervals, num_samples=samples, cheb_degree=args.degree)
+        if head:
+            print(f"WARNING: Intervals + Samples modified. New values i={intervals} s={samples}")
+            perror = (abs(intervals * samples - args.intervals * args.samples) / (args.samples * args.intervals)) * 100
+            print(f"Error of {perror}%")
+
+    hist, bin_edges = kpm(A, intervals=intervals, samples=samples, cheb_degree=args.degree)
     if head:
         endTime = time.time()
         for lb, ub, res in zip(bin_edges, bin_edges[1:], hist):
             print(f'[{lb + 1},{ub + 1}] {res}')
-        print("Read Time: " + str(endReadTime - startTime))
-        print("Total Time: " + str(endTime - startTime))
-
+        print("readtime:", endReadTime - startTime)
+        print("totaltime:", endTime - startTime)
