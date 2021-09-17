@@ -340,7 +340,7 @@ if __name__ == "__main__":
         (intervals, samples) = modify_intervals_samples(intervals, samples, size)
         if rank == 0:
             print("WARNING: Intervals + Samples modified. New values i=" + str(num_intervals) + " s=" + str(num_samples))
-            perror = (abs(intervals * samples -  intervals*samples) / (args.samples * args.intervals)) * 100
+            perror = (abs(intervals * samples -  args.intervals * args.samples) / (args.samples * args.intervals)) * 100
             print("Error of " + str(perror) +"%")
         
         
