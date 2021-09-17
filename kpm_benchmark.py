@@ -1,6 +1,6 @@
 import argparse
 import time
-
+import itertools
 import numpy as np
 import scipy as sp
 import scipy.sparse
@@ -274,6 +274,27 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+def modify_intervals_samples(intervals, samples, cores , delta=10):
+    desired_samples = intervals * samples
+    
+    pintervals = [ (intervals + x) for x in range(-delta,delta+1)]
+    psamples = [ (samples + x) for x in range(-delta,delta+1)]
+
+    # List of Parameters to try
+    pParams = list(itertools.product(pintervals, psamples))
+
+    #Keep only solutions that fulfill constraint intervals*samples
+    fParams =  list(filter(lambda x: x[0]*x[1] % cores == 0, pParams))
+
+    #Compute error caused by parameters
+    desired_samples = intervals * samples
+    eParams = list(map(lambda x: abs(x[0]*x[1] - desired_samples), fParams))
+
+    #Select Parameters with smalles error from original values
+    min_index = np.argmin(eParams)
+    solution = fParams[min_index]
+    
+    return solution
 
 def kpm(A, num_intervals=100, num_samples=256, cheb_degree=300, comm=MPI.COMM_WORLD):
     size = comm.Get_size()
@@ -290,6 +311,7 @@ if __name__ == "__main__":
 
     comm = MPI.COMM_WORLD
     head = comm.Get_rank() == 0
+    size = comm.Get_size()
 
     A = None
     if head:
@@ -308,10 +330,25 @@ if __name__ == "__main__":
     comm.Barrier()
     if head:
         endReadTime = time.time()
-    hist, bin_edges = kpm(A, num_intervals=args.intervals, num_samples=args.samples, cheb_degree=args.degree)
+    
+    intervals = args.intervals
+    samples = args.samples
+    cheb_degree = args.degree
+    
+    #Modify Intervals and Samples if divisibility not fulfilled
+    if intervals * samples % size != 0:
+        (intervals, samples) = modify_intervals_samples(intervals, samples, size)
+        if rank == 0:
+            print("WARNING: Intervals + Samples modified. New values i=" + str(num_intervals) + " s=" + str(num_samples))
+            perror = (abs(intervals * samples -  intervals*samples) / (args.samples * args.intervals)) * 100
+            print("Error of " + str(perror) +"%")
+        
+        
+    hist, bin_edges = kpm(A, num_intervals=intervals, num_samples=samples, cheb_degree=args.degree)
     if head:
         endTime = time.time()
         for lb, ub, res in zip(bin_edges, bin_edges[1:], hist):
             print(f'[{lb + 1},{ub + 1}] {res}')
         print("Read Time: " + str(endReadTime - startTime))
         print("Total Time: " + str(endTime - startTime))
+
