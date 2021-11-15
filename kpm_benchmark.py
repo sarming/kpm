@@ -1,6 +1,7 @@
 import argparse
-import time
 import itertools
+import time
+
 import numpy as np
 import scipy as sp
 import scipy.sparse
@@ -311,13 +312,11 @@ def kpm(A, intervals=100, samples=256, cheb_degree=300, comm=MPI.COMM_WORLD):
     return hist, bin_edges
 
 
-if __name__ == "__main__":
+def main():
     args = parse_args()
-
     comm = MPI.COMM_WORLD
     head = comm.Get_rank() == 0
     size = comm.Get_size()
-
     A = None
     if head:
         startTime = time.time()
@@ -330,15 +329,12 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Unknown graph file format {args.graph}. Terminating...")
     A = bcast_csr_matrix(A, numa_size=args.numa_cores)
-
     comm.Barrier()
     if head:
         endReadTime = time.time()
-
     intervals = args.intervals
     samples = args.samples
     cheb_degree = args.degree
-
     # Modify Intervals and Samples if divisibility not fulfilled
     if intervals * samples % size != 0:
         (intervals, samples) = modify_intervals_samples(intervals, samples, size)
@@ -346,7 +342,6 @@ if __name__ == "__main__":
             print(f"WARNING: Intervals + Samples modified. New values i={intervals} s={samples}")
             perror = (abs(intervals * samples - args.intervals * args.samples) / (args.samples * args.intervals)) * 100
             print(f"Error of {perror}%")
-
     hist, bin_edges = kpm(A, intervals=intervals, samples=samples, cheb_degree=args.degree)
     if head:
         endTime = time.time()
@@ -354,3 +349,7 @@ if __name__ == "__main__":
             print(f'[{lb + 1},{ub + 1}] {res}')
         print("readtime:", endReadTime - startTime)
         print("totaltime:", endTime - startTime)
+
+
+if __name__ == "__main__":
+    main()
