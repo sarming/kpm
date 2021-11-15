@@ -20,4 +20,3 @@ def step(lb, ub, j):
 def step_jackson(lb, ub, degree):
     """Return list of degree Chebyshev coefficients for [lb,ub] indicator function (with Jackson smoothing)."""
     return [step(lb, ub, j) * jackson(degree, j) for j in range(degree + 1)]
-

@@ -1,5 +1,6 @@
 import numpy as np
 
+
 def random_vector(n):
     """Return normalized dimension n random vector."""
     # return np.random.choice([-1, 1], n)

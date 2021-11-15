@@ -36,10 +36,21 @@ def toy(size, intervals, samples):
     head_comm = [(i * samples) // samples_per_proc for i in range(intervals)]
     print("procs per interval:", i_comms)
     print("heads:", head_comm)
-    print("samples per proc:", [[num_samples_i_p(i, p, samples, samples_per_proc)
-                                 for p in procs] for i, procs in enumerate(i_comms)])
-    print("total number of samples:", sum(num_samples_i_p(i, p, samples, samples_per_proc)
-                                          for i, procs in enumerate(i_comms) for p in procs))
+    print(
+        "samples per proc:",
+        [
+            [num_samples_i_p(i, p, samples, samples_per_proc) for p in procs]
+            for i, procs in enumerate(i_comms)
+        ],
+    )
+    print(
+        "total number of samples:",
+        sum(
+            num_samples_i_p(i, p, samples, samples_per_proc)
+            for i, procs in enumerate(i_comms)
+            for p in procs
+        ),
+    )
     print(intervals * samples)
     print("last proc used:", i_comms[-1][-1])
 
@@ -72,7 +83,10 @@ def estimate(A, intervals=100, samples=256, cheb_degree=300, comm=MPI.COMM_WORLD
 
     i_comms = [procs_for_interval(i, samples, samples_per_proc) for i in range(intervals)]
     assert intervals * samples == sum(
-        num_samples_i_p(i, p, samples, samples_per_proc) for i, procs in enumerate(i_comms) for p in procs)
+        num_samples_i_p(i, p, samples, samples_per_proc)
+        for i, procs in enumerate(i_comms)
+        for p in procs
+    )
 
     head_comm = [(i * samples) // samples_per_proc for i in range(intervals)]
     assert head_comm == [procs[0] for procs in i_comms]
@@ -82,9 +96,13 @@ def estimate(A, intervals=100, samples=256, cheb_degree=300, comm=MPI.COMM_WORLD
         print("samples:", samples)
         print("procs:", i_comms)
         print("heads:", head_comm)
-        print("samples:",
-              [[num_samples_i_p(i, p, samples, samples_per_proc) for p in procs] for i, procs in
-               enumerate(i_comms)])
+        print(
+            "samples:",
+            [
+                [num_samples_i_p(i, p, samples, samples_per_proc) for p in procs]
+                for i, procs in enumerate(i_comms)
+            ],
+        )
 
     i_comms = list(map(comm.Create_group, map(comm.group.Incl, i_comms)))
     head_comm = comm.Create_group(comm.group.Incl(list(set(head_comm))))
@@ -118,5 +136,6 @@ def estimate(A, intervals=100, samples=256, cheb_degree=300, comm=MPI.COMM_WORLD
 
 def interval_edges(n=None):
     if n is None:  # Intervals from previous experiments (101 bins)
-        return [-1.] + list(np.round(np.histogram_bin_edges([], 99, range=(-0.99, 0.99)), 2)) + [1.]
-    return np.histogram_bin_edges([], n, range=(-1., 1.))
+        middle_99 = np.round(np.histogram_bin_edges([], 99, range=(-0.99, 0.99)), 2)
+        return [-1.0] + list(middle_99) + [1.0]
+    return np.histogram_bin_edges([], n, range=(-1.0, 1.0))

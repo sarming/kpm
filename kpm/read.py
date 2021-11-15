@@ -18,7 +18,7 @@ def laplacian_from_metis(file, save_as=None, zero_based=False):
         mtx = sparse.lil_matrix((n, n))
         for (node, neighbors) in enumerate(f.readlines()):
             neighbors = [int(v) - (1 if not zero_based else 0) for v in neighbors.split()]
-            mtx[node, neighbors] = 1.
+            mtx[node, neighbors] = 1.0
 
         laplacian = sparse.csgraph.laplacian(mtx.tocsr(), normed=True)
         shifted_laplacian = laplacian - sparse.eye(n)
@@ -28,9 +28,12 @@ def laplacian_from_metis(file, save_as=None, zero_based=False):
 
         return shifted_laplacian
 
+
 def graph(filename):
     if filename.endswith('.metis'):
-        return laplacian_from_metis(filename, save_as=filename.replace('.metis', '.npz'), zero_based=True)
+        return laplacian_from_metis(
+            filename, save_as=filename.replace('.metis', '.npz'), zero_based=True
+        )
     elif filename.endswith('.npz'):
         return sparse.load_npz(filename)
     else:
