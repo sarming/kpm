@@ -42,3 +42,12 @@ def histogram(file, density=False):
         hist /= sum(hist)
 
     return hist, bin_edges
+
+
+if __name__ == "__main__":
+    import matplotlib.pylab as plt
+
+    A = sp.sparse.load_npz("pokec_full.npz")
+    print()
+    plt.spy(A, markersize=0.01, alpha=0.5)
+    plt.show()
