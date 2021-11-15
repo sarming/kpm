@@ -79,6 +79,7 @@ def main():
         for lb, ub, res in zip(bin_edges, bin_edges[1:], hist):
             print(f'[{lb + 1},{ub + 1}] {res}')
         print("readtime:", endReadTime - startTime)
+        print("runime:", endTime - endReadTime)
         print("totaltime:", endTime - startTime)
 
 

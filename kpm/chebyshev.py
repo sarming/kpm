@@ -8,7 +8,7 @@ def random_vector(n):
     return v / np.linalg.norm(v)
 
 
-def sample(A, coef, v, return_all=False):
+def sample(A, coef, v, return_history=False):
     """Return sum_i ( coef_i * v * T_i(A) @ v ) = v * coef(A) @ v."""
     # T_0(x) = 1
     # T_1(x) = x
@@ -16,16 +16,18 @@ def sample(A, coef, v, return_all=False):
     # w_i = T_{n-i} * v (we start at n=2)
     w_2 = v
     w_1 = A @ v
-    sample = coef[0] * v @ w_2 + coef[1] * v @ w_1
-    samples = []
+    sample = coef[0] * (v @ w_2) + coef[1] * (v @ w_1)
+    history = []
     for c in coef[2:]:
-        w_0 = 2 * A @ w_1 - w_2
-        sample += c * v @ w_0
+        w_0 = A @ w_1
+        w_0 *= 2
+        w_0 -= w_2
+        sample += c * (v @ w_0)
         w_2 = w_1
         w_1 = w_0
-        if return_all:
-            samples.append(sample)
-    return samples if return_all else sample
+        if return_history:
+            history.append(sample)
+    return history if return_history else sample
 
 
 def estimator(A, coef, samples):
