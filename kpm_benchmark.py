@@ -88,12 +88,12 @@ def chebyshev_sample_dist(Aq, coef, v, comm):
     if comm.Get_rank() == 0:
         sample += coef[1] * v @ w1
         comm.Send([w1, MPI.DOUBLE], dest=2, tag=t)
-    elif comm.Get_rank() == 2:
-        w1 = np.empty(n_half, dtype='d')
-        comm.Recv([w1, MPI.DOUBLE], source=0, tag=t)
     elif comm.Get_rank() == 1:
         w1 = np.empty(n_half, dtype='d')
         comm.Recv([w1, MPI.DOUBLE], source=3, tag=t)
+    elif comm.Get_rank() == 2:
+        w1 = np.empty(n_half, dtype='d')
+        comm.Recv([w1, MPI.DOUBLE], source=0, tag=t)
     elif comm.Get_rank() == 3:
         sample += coef[1] * v @ w1
         comm.Send([w1, MPI.DOUBLE], dest=1, tag=t)
@@ -213,7 +213,11 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
     #for now assume number of processes is at least 4 times of number of intervals
 
 
-    my_bin = comm.Get_rank() % num_intervals
+    #my_bin = comm.Get_rank() % num_intervals
+
+    procs_per_interval = int(comm.Get_size() / num_intervals)
+    my_bin = int(comm.Get_rank() / procs_per_interval)
+
     bin_comm = comm.Split(my_bin)
     bin_rank = bin_comm.Get_rank()
     #relevant if multiple processes compute 1 interval
