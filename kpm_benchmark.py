@@ -1,9 +1,10 @@
+import time
+
 import numpy as np
 import scipy as sp
 import scipy.sparse
 from mpi4py import MPI
-import time
-#from multiprocessing import Pool
+
 
 def jackson_coef(p, j):
     """Return the j-th Jackson coefficient for degree p Chebyshev polynomial."""
@@ -43,10 +44,12 @@ def chebyshev_sample(A, coef, v):
     # w_i = T_{n-i} * v (we start at n=2)
     w_2 = v
     w_1 = A @ v
-    sample = coef[0] * v @ w_2 + coef[1] * v @ w_1
+    sample = coef[0] * (v @ w_2) + coef[1] * (v @ w_1)
     for c in coef[2:]:
-        w_0 = 2 * A @ w_1 - w_2
-        sample += c * v @ w_0
+        w_0 = A @ w_1 - w_2
+        w_0 *= 2
+        w_0 -= w2
+        sample += c * (v @ w_0)
         w_2 = w_1
         w_1 = w_0
     return sample
@@ -62,7 +65,7 @@ def chebyshev_sample_dist(Aq, coef, v, comm):
 
     w2 = v
     if comm.Get_rank() == 0 or comm.Get_rank() == 3:
-        sample = coef[0] * v @ w2
+        sample = coef[0] * (v @ w2)
 
     #w1 = A @ v
     #compute w1 parts and sum them
@@ -86,7 +89,7 @@ def chebyshev_sample_dist(Aq, coef, v, comm):
     #distribute w1
     t += 1
     if comm.Get_rank() == 0:
-        sample += coef[1] * v @ w1
+        sample += coef[1] * (v @ w1)
         comm.Send([w1, MPI.DOUBLE], dest=2, tag=t)
     elif comm.Get_rank() == 1:
         w1 = np.empty(n_half, dtype='d')
@@ -95,7 +98,7 @@ def chebyshev_sample_dist(Aq, coef, v, comm):
         w1 = np.empty(n_half, dtype='d')
         comm.Recv([w1, MPI.DOUBLE], source=0, tag=t)
     elif comm.Get_rank() == 3:
-        sample += coef[1] * v @ w1
+        sample += coef[1] * (v @ w1)
         comm.Send([w1, MPI.DOUBLE], dest=1, tag=t)
 
 
@@ -103,14 +106,10 @@ def chebyshev_sample_dist(Aq, coef, v, comm):
     for c in coef[2:]:
         #compute parts of w0
         #w0 = 2 * A @ w1 - w2
-        if comm.Get_rank() == 0:
-            w0_part = 2 * Aq @ w1 - w2
-        elif comm.Get_rank() == 1:
-            w0_part = 2 * Aq @ w1
-        elif comm.Get_rank() == 2:
-            w0_part = 2 * Aq @ w1
-        elif comm.Get_rank() == 3:
-            w0_part = 2 * Aq @ w1 - w2
+        w0_part = Aq @ w1
+        w0_part *= 2
+        if comm.Get_rank() in (0,3):
+            w0_part-=w2
         #print(comm.Get_rank(), ': w0_part ', sum(w0_part))
 
         #exchange w0 parts, sum them and compute next sample
@@ -120,7 +119,7 @@ def chebyshev_sample_dist(Aq, coef, v, comm):
             w0 = np.empty(n_half, dtype='d')
             comm.Recv([w0, MPI.DOUBLE], source=1, tag=t)
             w0 += w0_part
-            sample += c * v @ w0
+            sample += c * (v @ w0)
         elif comm.Get_rank() == 1:
             comm.Send([w0_part, MPI.DOUBLE], dest=0, tag=t)
         elif comm.Get_rank() == 2:
@@ -129,7 +128,7 @@ def chebyshev_sample_dist(Aq, coef, v, comm):
             w0 = np.empty(n_half, dtype='d')
             comm.Recv([w0, MPI.DOUBLE], source=2, tag=t)
             w0 += w0_part
-            sample += c * v @ w0
+            sample += c * (v @ w0)
 
         #update w2
         w2 = w1
@@ -152,15 +151,9 @@ def chebyshev_sample_dist(Aq, coef, v, comm):
 
 
     #return sample
-    if comm.Get_rank() == 0:
+    if comm.Get_rank() in (0,3):
         return sample
-    elif comm.Get_rank() == 1:
-        return 0
-    elif comm.Get_rank() == 2:
-        return 0
-    elif comm.Get_rank() == 3:
-        return sample
-
+    return 0
 
 
 def chebyshev_estimator(A, coef, num_samples, comm):
@@ -237,7 +230,6 @@ def estimate_histogram(A, bin_edges, cheb_degree, num_samples, comm=MPI.COMM_WOR
         {groups} groups of 4 processes and {batch_size} samples per group')
 
     ret = chebyshev_estimator(A, coef, batch_size, bin_comm)
-    #print('ret', comm.Get_rank(), ret)
 
     #check reduce after distributed computation
     result = bin_comm.reduce(ret, MPI.SUM, root=0)
@@ -312,15 +304,18 @@ def copy_array_to_shm(arr=None, comm=MPI.COMM_WORLD):
     return new_arr
 
 
-def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD):
+def bcast_csr_matrix(A=None, comm=MPI.COMM_WORLD, cores_per_team=None):
     """Broadcast csr_matrix A (using shared memory)."""
     rank = comm.Get_rank()
     assert A is not None or rank != 0
 
-    node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
+    if cores_per_team is None:
+        node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
+    else:
+        nodeTeamId = rank // cores_per_team
+        node_comm = comm.Split(nodeTeamId)
     node_rank = node_comm.Get_rank()
-    #head_comm = comm.Split(True if node_rank == 0 else MPI.UNDEFINED)
-    head_comm = comm.Split(node_rank) #Intel
+    head_comm = comm.Split(node_rank)  # (True if node_rank == 0 else MPI.UNDEFINED)
 
     Ad = Ai = Ap = None
     if rank == 0:
@@ -350,10 +345,10 @@ if __name__ == "__main__":
         #A = laplacian_from_metis('pokec_full.metis', save_as='pokec_full.npz', zero_based=True)
         #A = sp.sparse.load_npz('pokec_full.npz')
         A = sp.sparse.load_npz('100K/graphs/1.npz')
-    A = bcast_csr_matrix(A)
+    A = bcast_csr_matrix(A, cores_per_team=None)
 
-    num_intervals = 4 #101
-    num_samples = 5 #1
+    num_intervals = 4 #256 #101
+    num_samples = 5 #128 #1
     cheb_degree = 300
     #moved startTime
     if rank == 0:
